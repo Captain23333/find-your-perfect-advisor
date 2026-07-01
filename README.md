@@ -38,7 +38,7 @@
 
 - **不再手动刷 Google Scholar** — AI 自动搜索、筛选、评分
 - **不再凭感觉判断导师** — 结构化评估学术实力、潜力、人品
-- **不再信息不对称** — 汇聚小木虫、知乎、Scholar、主页等多源信息
+- **不再信息不对称** — 汇聚小红书、知乎、Scholar、主页等多源信息
 - **不再纠结优先级** — 综合评分给你明确的"优先联系"排名
 
 ### 技能文件清单
@@ -56,41 +56,25 @@
 
 Claude Code 是 Anthropic 推出的命令行 AI 编程与任务工具，本套技能在 Claude Code 环境中运行。
 
-### 第一步：安装 Node.js
-
-Claude Code 需要 Node.js 18 或更高版本。
-
-**macOS（推荐用 Homebrew）：**
+**macOS/Linux/WSL：**
 
 ```bash
-# 安装 Homebrew（如已安装跳过）
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# 安装 Node.js
-brew install node
-
-# 验证
-node --version   # 应显示 v18.x 或更高
+curl -fsSL https://claude.ai/install.sh | bash
 ```
 
-**Windows：**
-
-前往 [nodejs.org](https://nodejs.org) 下载 LTS 版本安装包，安装后在命令提示符中运行 `node --version` 验证。
-
-**Linux（Ubuntu/Debian）：**
+**Windows（PowerShell）：**
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
+irm https://claude.ai/install.ps1 | iex
 ```
 
-### 第二步：安装 Claude Code
+**Windows（CMD）：**
 
 ```bash
-npm install -g @anthropic-ai/claude-code
+curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
 ```
 
-### 第三步：登录
+**终端登录：**
 
 ```bash
 claude
@@ -100,7 +84,7 @@ claude
 
 > **需要什么账号？** 需要 Claude Pro 订阅（$20/月）或 Claude for Teams/Enterprise 账号，免费版不支持 Claude Code。
 
-### 第四步：验证安装
+**验证：**
 
 ```bash
 claude --version
