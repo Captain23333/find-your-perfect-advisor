@@ -19,8 +19,8 @@
 ## 目录
 
 1. [项目简介](#1-项目简介)
-2. [安装 Claude Code](#2-安装-claude-code)
-3. [安装技能（Skills）](#3-安装技能skills)
+2. [选择 Claude Code 或 Codex](#2-选择-claude-code-或-codex)
+3. [在项目中启用技能（Skills）](#3-在项目中启用技能skills)
 4. [四个技能详解](#4-四个技能详解)
 5. [完整使用流程](#5-完整使用流程)
 6. [分阶段独立使用](#6-分阶段独立使用)
@@ -45,18 +45,22 @@
 
 | 文件 | 阶段 | 作用 |
 |------|------|------|
-| `skills/advisor-finder.skill` | Phase 1 | 导师发现与匹配打分 |
-| `skills/advisor-detective.skill` | Phase 2 | 导师深度背景调查 |
-| `skills/advisor-evaluator.skill` | Phase 3 | 综合评分与最终排名 |
-| `skills/advisor-pipeline.skill` | 全程 | 三阶段流水线编排器（推荐入口） |
+| `skills/advisor-finder/SKILL.md` | Phase 1 | 导师发现与匹配打分 |
+| `skills/advisor-detective/SKILL.md` | Phase 2 | 导师深度背景调查 |
+| `skills/advisor-evaluator/SKILL.md` | Phase 3 | 综合评分与最终排名 |
+| `skills/advisor-pipeline/SKILL.md` | 全程 | 三阶段流水线编排器（推荐入口） |
 
 ---
 
-## 2. 安装 Claude Code
+## 2. 选择 Claude Code 或 Codex
 
-Claude Code 是 Anthropic 推出的命令行 AI 编程与任务工具，本套技能在 Claude Code 环境中运行。
+本项目使用普通 Markdown 格式的 `SKILL.md`，可以在 **Claude Code** 或 **Codex** 中使用。请选择其中一个已经安装并可用的工具，然后按第 3 节把技能复制到你的具体项目中。
 
-**macOS/Linux/WSL：**
+### 使用 Claude Code
+
+推荐使用官方原生安装器；原生版本会自动在后台更新。
+
+**macOS / Linux / WSL：**
 
 ```bash
 curl -fsSL https://claude.ai/install.sh | bash
@@ -68,65 +72,126 @@ curl -fsSL https://claude.ai/install.sh | bash
 irm https://claude.ai/install.ps1 | iex
 ```
 
-**Windows（CMD）：**
-
-```bash
-curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
-```
-
-**终端登录：**
-
-```bash
-claude
-```
-
-首次运行会打开浏览器要求你用 Claude.ai 账号登录并授权。完成后回到终端即可使用。
-
-> **需要什么账号？** 需要 Claude Pro 订阅（$20/月）或 Claude for Teams/Enterprise 账号，免费版不支持 Claude Code。
-
-**验证：**
+安装后验证并启动：
 
 ```bash
 claude --version
-# 应输出版本号，如：1.x.x
+claude
 ```
+
+首次启动会打开浏览器完成登录。Claude Code 当前支持 Claude Pro、Max、Team、Enterprise 或 Anthropic Console 账号，也支持部分第三方云服务提供商。
+
+如果不想使用终端，也可以从官方安装文档进入 Claude Desktop 的 macOS 或 Windows 下载入口。
+
+> 安装方式和账号支持可能继续变化，请以 [Claude Code 官方安装文档](https://code.claude.com/docs/en/installation) 为准。旧的 npm 安装仍可用，但官方目前优先推荐原生安装器。
 
 ---
 
-## 3. 安装技能（Skills）
+### 使用 Codex
 
-技能（.skill 文件）是 Claude Code 的可安装扩展，提供专门的工作流指令。
+推荐使用 Codex 官方原生安装器：
 
-### 方法一：通过 Cowork 界面安装（推荐）
-
-如果你使用 Claude 桌面应用的 Cowork 模式：
-
-1. 打开 Cowork 界面
-2. 将 `.skill` 文件拖入聊天窗口，或点击文件卡片上的 **Save skill** 按钮
-3. 依次安装四个技能文件
-
-### 方法二：通过命令行安装
+**macOS / Linux：**
 
 ```bash
-# 进入你存放项目的目录
-cd ~/your-working-directory
-
-# 安装技能（路径替换为你实际的文件位置）
-claude skill install /path/to/find-your-perfect-advisor/skills/advisor-finder.skill
-claude skill install /path/to/find-your-perfect-advisor/skills/advisor-detective.skill
-claude skill install /path/to/find-your-perfect-advisor/skills/advisor-evaluator.skill
-claude skill install /path/to/find-your-perfect-advisor/skills/advisor-pipeline.skill
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
 ```
 
-### 验证安装
+**Windows（PowerShell）：**
 
-在 Claude Code 中输入：
-
-```
-/skills
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
 ```
 
-应该能看到以下四个技能：
+也可以使用包管理器：
+
+```bash
+# npm
+npm install -g @openai/codex
+
+# Homebrew
+brew install --cask codex
+```
+
+也可以从 [Codex 最新 GitHub Release](https://github.com/openai/codex/releases/latest) 下载与你的平台对应的独立二进制文件。想使用图形界面时，可以运行 `codex app`，或进入 [Codex App 官方页面](https://chatgpt.com/codex/?app-landing-page=true) 下载桌面应用。
+
+安装后验证、登录并启动：
+
+```bash
+codex --version
+codex login
+codex
+```
+
+`codex login` 默认通过浏览器登录 ChatGPT；也可以直接运行 `codex`，再选择 **Sign in with ChatGPT**。Codex 也支持 OpenAI API key。具体方式见 [Codex 官方安装说明](https://github.com/openai/codex#quickstart) 和 [Codex 身份验证文档](https://developers.openai.com/codex/auth)。
+
+如果你使用 Codex，无需安装 `.skill` 压缩包。本项目提供的 `SKILL.md` 可以直接作为项目级技能使用。
+
+---
+
+## 3. 在项目中启用技能（Skills）
+
+四个技能现在都是普通 Markdown 目录，而不是 `.skill` 安装包。请选择 Claude Code 或 Codex 对应的项目级目录。技能只需复制到你准备开展导师搜索的**项目文件夹内**，不需要复制到用户主目录或任何全局根目录。
+
+> Codex 的标准目录名是 `.agents/skills/`（`agents` 为复数），Claude Code 使用 `.claude/skills/`。
+
+### 方式一：用于 Claude Code
+
+进入你要开展导师搜索的项目，然后复制技能：
+
+```bash
+cd /path/to/your-advisor-search-project
+mkdir -p .claude/skills
+cp -R /path/to/find-your-perfect-advisor/skills/* .claude/skills/
+```
+
+复制后的目录结构应为：
+
+```text
+your-advisor-search-project/
+└── .claude/
+    └── skills/
+        ├── advisor-finder/SKILL.md
+        ├── advisor-detective/SKILL.md
+        ├── advisor-evaluator/SKILL.md
+        └── advisor-pipeline/SKILL.md
+```
+
+### 方式二：用于 Codex
+
+进入你要开展导师搜索的项目，然后复制技能：
+
+```bash
+cd /path/to/your-advisor-search-project
+mkdir -p .agents/skills
+cp -R /path/to/find-your-perfect-advisor/skills/* .agents/skills/
+```
+
+复制后的目录结构应为：
+
+```text
+your-advisor-search-project/
+└── .agents/
+    └── skills/
+        ├── advisor-finder/SKILL.md
+        ├── advisor-detective/SKILL.md
+        ├── advisor-evaluator/SKILL.md
+        └── advisor-pipeline/SKILL.md
+```
+
+`advisor-finder` 还包含 `scripts/build_advisor_excel.py`。请复制整个技能目录，不要只复制单个 `SKILL.md`，否则生成 Excel 时会缺少脚本。
+
+### 验证
+
+在所选工具中打开目标项目并开始新会话，然后要求它列出或使用 `advisor-pipeline`。如果工具没有识别到技能，请先确认当前工作目录就是包含 `.claude/` 或 `.agents/` 的目标项目。
+
+例如直接输入：
+
+```
+使用 advisor-pipeline 开始导师匹配流程
+```
+
+工具应能识别以下四个技能：
 - `advisor-finder`
 - `advisor-detective`
 - `advisor-evaluator`
@@ -224,24 +289,31 @@ claude skill install /path/to/find-your-perfect-advisor/skills/advisor-pipeline.
 
 ### 准备工作
 
-1. 安装好 Claude Code 和四个技能（见第 2、3 节）
+1. 选择 Claude Code 或 Codex，并把四个技能复制到当前项目（见第 2、3 节）
 2. 准备你的 CV 文件（推荐 PDF 格式）
 3. 想清楚你的研究兴趣和目标范围
 
-### 在 Claude Code 中开始
+### 在项目中开始
 
 ```bash
-# 进入你的工作目录（输出文件会保存在这里）
+# 创建并进入你的项目目录（输出文件会保存在这里）
 mkdir ~/phd-advisor-search
 cd ~/phd-advisor-search
+```
 
-# 启动 Claude Code
+按照第 3 节把技能复制到这个项目的 `.claude/skills/` 或 `.agents/skills/` 后，在此目录启动你选择的工具。例如：
+
+```bash
+# Claude Code
 claude
+
+# 或 Codex
+codex
 ```
 
 ### 触发流水线
 
-对 Claude 说：
+对所选工具说：
 
 ```
 帮我找导师，我想走完整个导师匹配流水线。我的 CV 在 [路径/cv.pdf]。
@@ -253,13 +325,13 @@ claude
 开始导师匹配流程
 ```
 
-Claude 会自动触发 **advisor-pipeline** 技能，引导你完成以下步骤：
+工具会自动触发 **advisor-pipeline** 技能，引导你完成以下步骤：
 
 ---
 
 ### Phase 1 详细步骤
 
-**Claude 会先问你：**
+**工具会先问你：**
 
 ```
 请提供以下信息：
@@ -280,7 +352,7 @@ Claude 会自动触发 **advisor-pipeline** 技能，引导你完成以下步骤
 
 **等待时间：** 约 15–30 分钟（取决于目标范围大小）
 
-**Phase 1 完成后 Claude 会汇报：**
+**Phase 1 完成后工具会汇报：**
 
 ```
 ✅ Phase 1 完成
@@ -307,7 +379,7 @@ shallow / medium / high（默认调查 Top 10）
 medium，调查 Top 10
 ```
 
-**Claude 展示确认提示（你需要明确回复"确认"）：**
+**工具展示确认提示（你需要明确回复"确认"）：**
 
 ```
 ⚠️ 调查将消耗较大量 token，确认后开始。
@@ -317,7 +389,7 @@ medium，调查 Top 10
 
 **等待时间：** Medium 深度约 30–60 分钟
 
-**Phase 2 完成后 Claude 汇报：**
+**Phase 2 完成后工具汇报：**
 
 ```
 ✅ Phase 2 完成
@@ -335,7 +407,7 @@ medium，调查 Top 10
 
 ### Phase 3 详细步骤
 
-**Claude 展示权重确认：**
+**工具展示权重确认：**
 
 ```
 默认权重：匹配度 40% + 硬实力 30% + 潜力 20% + 人品 10%
@@ -350,7 +422,7 @@ medium，调查 Top 10
 
 **等待时间：** 约 5–10 分钟
 
-**Phase 3 完成后 Claude 汇报：**
+**Phase 3 完成后工具汇报：**
 
 ```
 ✅ 全流水线完成！
@@ -429,7 +501,7 @@ medium，调查 Top 10
 
 **Q：advisor-finder 找不到某个学校的教授怎么办？**
 
-A：部分学校官网是 JavaScript 渲染的（SPA），直接抓取会失败。可以告诉 Claude "用 Google 搜索补充 [学校名] [方向] faculty"，或者安装 Claude in Chrome 插件让 Claude 直接浏览渲染后的页面。
+A：部分学校官网是 JavaScript 渲染的（SPA），直接抓取会失败。可以告诉所选工具“用网页搜索补充 [学校名] [方向] faculty”。如果当前工具支持浏览器集成，也可以让它直接查看渲染后的页面。
 
 **Q：Phase 2 中某位导师完全没有公开信息怎么办？**
 
@@ -446,7 +518,7 @@ A：粗估参考（实际取决于目标范围大小和网页内容量）：
 
 **Q：中途断了怎么继续？**
 
-A：三个技能都维护状态文件（`ADVISOR_STATE.md`、`DETECTIVE_STATE.md`、`EVALUATOR_STATE.md`），告诉 Claude "状态文件在 XXX，从 [导师名] 继续" 即可恢复。
+A：三个技能都维护状态文件（`ADVISOR_STATE.md`、`DETECTIVE_STATE.md`、`EVALUATOR_STATE.md`），告诉所选工具“状态文件在 XXX，从 [导师名] 继续”即可恢复。
 
 **Q：可以只调查我自己找的导师，不用 Phase 1 吗？**
 
