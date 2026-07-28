@@ -51,6 +51,13 @@ python3 scripts/sync_community_knowledge.py
 
 正文中的 Reddit、知乎、一亩三分地、Rate My Professors、OpenReview 等链接必须逐条判断身份对应关系和访问状态。平台受限或身份无法确认时，记录“未完成核验”，不要改写成事实。
 
+2026-07-28 补充检查：
+
+- GitHub 指定快照目录、Advisor Ledger 网页、BAIR faithful 镜像、Append、Reddit 和 Rate My Professors 可访问。
+- 两个 AdvisorEval 可视化页面在自动检查中无法稳定加载。
+- OpenReview 链接进入浏览器验证页；知乎问答返回 403；一亩三分地页面出现解码错误；小红书短链被自动访问环境拦截。将这些链接标为“平台受限，未完成核验”。
+- PDF 文本提取可能在换行处截断长 URL。末尾明显不完整的链接不得直接判为失效；应回到 PDF 对应页恢复完整链接。
+
 ## 调查时如何使用
 
 1. 先读取 `community-knowledge-metadata.json`；缺失或超过 24 小时未刷新时运行同步脚本。
