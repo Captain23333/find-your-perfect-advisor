@@ -1,2 +1,10 @@
 .advisor-atlas/
 projects/
+
+# Local advisor-community knowledge snapshots.
+# Keep volatile anonymous reports out of public Git history; sync them locally.
+skills/advisor-detective/references/community-blacklist-current.pdf
+skills/advisor-detective/references/community-blacklist-current.txt
+skills/advisor-detective/references/community-red-flags-current.txt
+skills/advisor-detective/references/community-knowledge-metadata.json
+skills/advisor-detective/references/community-links.json
