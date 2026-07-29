@@ -1,0 +1,98 @@
+{
+  "generatedAt": "2026-07-29T12:00:00Z",
+  "applicationRows": [
+    {
+      "schoolName": "Example University",
+      "qsRank": 42,
+      "qsEdition": "2027",
+      "programNameZh": "示例计算机科学博士项目",
+      "programNameEn": "PhD in Computer Science",
+      "degree": "PhD",
+      "intake": "2027 Fall",
+      "programUrl": "https://example.edu/phd",
+      "deadline": "2026-12-01",
+      "tuition": "USD 25,000 / year",
+      "scholarships": ["Example Fellowship：全额学费", "RA funding：待导师确认"],
+      "applicationMaterials": ["CV", "成绩单", "3 封推荐信", "Statement of Purpose"],
+      "rpRequirement": "官方页面未说明固定字数",
+      "advisorName": "Prof. Example",
+      "researchAndPapers": ["Human-AI Collaboration", "2026 Example Paper"],
+      "advisorEmail": "advisor@example.edu",
+      "advisorHomepage": "https://example.edu/advisor",
+      "advisorContactRequirements": ["邮件标题注明 PhD 2027", "联系前阅读指定论文"],
+      "researchFit": 8.7,
+      "feasibility": "eligible",
+      "backcheckSummary": ["研究方向持续", "组内生态暂无可核实负面信息"],
+      "risksAndGaps": ["Funding 仍需确认"],
+      "lastVerifiedAt": "2026-07-29",
+      "officialSources": ["https://example.edu/phd", "https://example.edu/advisor"]
+    },
+    {
+      "schoolName": "Sample Institute",
+      "qsRank": 88,
+      "qsEdition": "2027",
+      "programNameZh": "样例信息学博士项目",
+      "programNameEn": "Doctoral Program in Informatics",
+      "degree": "PhD",
+      "intake": "2027 Fall",
+      "programUrl": "https://sample.example/program",
+      "deadline": "待官方确认",
+      "tuition": "待核实",
+      "scholarships": ["校级奖学金：申请规则待核实"],
+      "applicationMaterials": ["CV", "Research Proposal"],
+      "rpRequirement": "1,500–2,000 words",
+      "advisorName": "Dr. Sample",
+      "researchAndPapers": ["AI for Health", "2025 Sample Study"],
+      "advisorEmail": "sample@example.org",
+      "advisorHomepage": "https://sample.example/advisor",
+      "advisorContactRequirements": ["先走项目申请，导师不接受提前套磁"],
+      "researchFit": 7.4,
+      "feasibility": "needs_confirmation",
+      "backcheckSummary": ["用户未选择复核组内生态"],
+      "risksAndGaps": ["截止日期和学费尚未完成核实"],
+      "lastVerifiedAt": "2026-07-29",
+      "officialSources": ["https://sample.example/program"]
+    }
+  ],
+  "fitRows": [
+    {
+      "advisorProgramId": "example-cs-phd-prof-example",
+      "advisorName": "Prof. Example",
+      "school": "Example University",
+      "program": "PhD in Computer Science",
+      "researchFit": 8.7,
+      "selected": true,
+      "fitEvidence": ["近期论文与 Human-AI Collaboration 高度匹配"]
+    }
+  ],
+  "evidenceRows": [
+    {
+      "advisorName": "Prof. Example",
+      "sectionLabel": "研究产出与趋势",
+      "finding": "近三年持续发表相关论文",
+      "evidenceStrength": "official",
+      "status": "verified",
+      "url": "https://example.edu/advisor",
+      "accessedAt": "2026-07-29"
+    }
+  ],
+  "sourceRows": [
+    {
+      "entity": "Example University / PhD CS",
+      "field": "deadline",
+      "value": "2026-12-01",
+      "status": "verified",
+      "url": "https://example.edu/phd",
+      "accessedAt": "2026-07-29",
+      "gap": ""
+    }
+  ],
+  "config": {
+    "degree": "PhD",
+    "intake": "2027 Fall",
+    "target": "Example institutions",
+    "interests": ["Human-AI Collaboration 70%", "AI for Health 30%"],
+    "selectedSections": ["研究产出与趋势", "指导环境与组内生态"],
+    "communityConsented": true
+  }
+}

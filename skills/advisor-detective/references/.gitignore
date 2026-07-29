@@ -1,0 +1,9 @@
+# Local third-party community snapshots. Keep this file inside the skill so the
+# protection survives copies to .agents/skills and .claude/skills.
+community-blacklist-current.pdf
+community-blacklist-current.txt
+community-red-flags-current.txt
+community-knowledge-metadata.json
+community-links.json
+.community-*.tmp
+.*.tmp

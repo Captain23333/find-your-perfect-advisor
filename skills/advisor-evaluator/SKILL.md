@@ -1,231 +1,93 @@
 ---
 name: advisor-evaluator
 description: >
-  导师综合评估技能（Advisor Evaluator）。接收 advisor-finder（匹配分）和 advisor-detective（各维度调查评分）的输出，
-  按可配置权重计算综合最终评分，生成最终导师排名 Excel。
-  触发场景：advisor-detective 完成后，用户说"综合评分"、"最终排名"、"综合打分"、"出综合结果"。
+  Combine Advisor Finder objective application facts and research-fit results
+  with user-selected Advisor Detective evidence. Use when the user wants a final
+  comparison, ranking, risk review, or application-ready Excel workbook. Keep
+  research fit, objective eligibility, and subjective background findings
+  separate while producing one directly usable application table.
 ---
 
-# 🏆 导师综合评估技能 (Advisor Evaluator)
+# Advisor Evaluator
 
-## 技能定位
+Produce a decision aid and application-ready workbook without collapsing
+objective application conditions and subjective advisor suitability into one
+opaque score.
 
-本技能是 **advisor-finder → advisor-detective → advisor-evaluator** 三阶段导师匹配流水线的**第三阶段（终点）**。
+Read:
 
-- **上游输入**：
-  - advisor-finder 产出的 Excel（含各维度匹配分 + 加权匹配总分）
-  - advisor-detective 产出的 Excel（含学术能力分、学术潜力分、人品分、深度背调分）
-- **本技能输出**：最终综合排名 Excel（含综合评分、可视化评分雷达、决策建议）
+- `outputs/advisor_records.json`
+- `outputs/program_records.json`
+- `outputs/evidence.json`
+- `project.json`
 
----
+If present, read `../advisor-pipeline/references/data-contract.md`. Always read
+`references/workbook-contract.md`.
 
-## 第一步：输入确认
+## Alignment
 
-向用户确认以下信息（可使用默认值，用户可自定义）：
+Join records by stable `advisor_program_id`, not fuzzy advisor-name matching.
+Preserve multiple programs for one advisor as separate application rows.
 
-```
-📊 导师综合评估 — 权重配置
+Check:
 
-请确认各维度权重（所有权重之和将自动归一化到 1.0）：
+- Every row maps to a real advisor and official program.
+- Objective facts are current for the requested intake.
+- Detective results cover the same selected sections for compared advisors.
+- `not_checked`, `not_found`, access failure, and conflicting evidence remain
+  distinct.
 
-┌─────────────────────────────────────┬────────┐
-│ 维度                                │ 默认权重 │
-├─────────────────────────────────────┼────────┤
-│ 🎯 研究方向匹配度（来自 advisor-finder） │  40%   │
-│ 📚 学术硬实力（来自 advisor-detective） │  30%   │
-│ 🚀 学术潜力（来自 advisor-detective）  │  20%   │
-│ 🤝 导师人品（来自 advisor-detective）  │  10%   │
-└─────────────────────────────────────┴────────┘
+## Decision model
 
-特殊情况自动处理：
-· 若 advisor-detective 深度为 shallow（无潜力分/人品分）：
-  → 自动调整为 匹配度 50% + 硬实力 50%
-· 若 advisor-detective 深度为 medium（无深度背调分）：
-  → 深度背调分不参与计算，其余三项按比例归一化
+Show three separate layers:
 
-是否使用默认权重？（是/否，若否请提供自定义权重）
-```
+1. **Research fit**: numeric, formula-driven, and sourced from Finder.
+2. **Objective feasibility**: `eligible`, `ineligible`, or
+   `needs_confirmation`, with explicit reasons.
+3. **Advisor suitability**: selected-section findings, supported risks, and
+   confidence.
 
-等待确认后记录权重，然后开始计算。
+Ask for optional weights only for numeric selected dimensions. Normalize weights
+over dimensions consistently selected for the compared advisors. Do not score
+an unselected or merely unavailable section as zero.
 
----
+Anonymous leads cannot directly change a score. Display a supported severe risk
+separately even when an overall numeric result is high.
 
-## 第二步：数据读取与对齐
+## Priority
 
-1. **读取 advisor-finder Excel** 的 Sheet 1（`1_加权评分排序`），提取：
-   - 导师名称
-   - 加权匹配总分（Weighted Total，0–10）
-   - 招生状态（✅/❓/❌）
-   - 各研究方向子分
+Recommend application priority using transparent rules:
 
-2. **读取 advisor-detective Excel** 的 Sheet 1（导师调查汇总），提取：
-   - 学术能力评分（0–10）
-   - 学术潜力评分（0–10；若为"未调查"则视为 null）
-   - 导师人品评分（0–10；若为"未调查"则视为 null）
-   - 深度背调评分（0–10；若为"未调查"则视为 null）
+- Do not recommend an objectively ineligible row as a primary application.
+- Keep unresolved feasibility visible instead of silently filtering it.
+- Prefer strong research fit when eligibility is comparable.
+- Surface verified severe risks before total scores.
+- Explain the recommendation in plain language and list the next verification
+  action.
 
-3. **对齐导师**：按导师全名匹配两个数据集。若名称有轻微差异（如中英文混合），手动对应并记录。
+## Workbook
 
-4. **检查缺失**：
-   - 若某导师在 advisor-detective 中未被调查（导师数量差异），在最终表中标注"detective数据缺失"
-   - ❌ 被过滤的导师保留在最终表中，综合分可计算但用灰色底纹标注"已过滤（不建议联系）"
+Generate `advisor_application_ready_YYYYMMDD.xlsx` using the deterministic
+builder. The primary sheet must be usable without manually joining other
+sheets.
 
----
+Include:
 
-## 第三步：综合评分计算
+- School, QS edition, program, degree/intake, official link, deadline, tuition,
+  scholarships, materials, and RP requirement.
+- Advisor research/papers, email, homepage, and multiline recruiting/contact
+  requirements.
+- Research fit, objective feasibility, selected backcheck result, supported
+  risks, gaps, official sources, and last verified date.
 
-### 核心公式
+Use separate sheets for fit, evidence, sources/freshness, and configuration.
 
-```
-综合评分 = Σ(维度权重 × 维度得分) / Σ(有效维度权重)
-```
+## Verification
 
-其中：
-- **有效维度权重** = 去除 null 维度后，剩余维度权重之和（用于归一化）
-- 所有分数均在 0–10 区间
-
-### 分档与权重矩阵
-
-| advisor-detective 深度 | 匹配度 | 硬实力 | 学术潜力 | 导师人品 | 深度背调 |
-|----------------------|--------|--------|---------|---------|---------|
-| shallow              | 50%    | 50%    | —       | —       | —       |
-| medium（默认）         | 40%    | 30%    | 20%     | 10%     | —       |
-| high                 | 35%    | 25%    | 20%     | 10%     | 10%     |
-| 用户自定义             | 用户填写 | 用户填写 | 用户填写 | 用户填写 | 用户填写 |
-
-*注：deep = medium + 深度背调时，deep 权重按比例分配给其余维度。*
-
-### 可信度标签
-
-每位导师的综合分同时附可信度标签：
-
-| 标签 | 条件 |
-|------|------|
-| 🟢 高可信 | 所有有效维度均有数据，且数据来源 ≥ 2 个 |
-| 🟡 中可信 | 部分维度数据不足（"无信息"较多）或来源单一 |
-| 🔴 低可信 | 关键维度（硬实力/匹配度）数据缺失或来源存疑 |
-
----
-
-## 第四步：综合评级与决策建议
-
-### 综合评级
-
-| 综合分 | 评级 | 含义 |
-|--------|------|------|
-| 8.5–10 | ⭐⭐⭐ 强烈推荐 | 全维度优秀，优先联系 |
-| 7.0–8.4 | ⭐⭐ 推荐 | 主要维度良好，值得联系 |
-| 5.5–6.9 | ⭐ 可考虑 | 有亮点但有短板，谨慎联系 |
-| 4.0–5.4 | ⚠️ 谨慎 | 明显短板，需深入了解后再决定 |
-| < 4.0 | ❌ 不推荐 | 不建议作为主申请目标 |
-
-### 决策建议生成规则
-
-为每位导师生成 2–3 句决策建议，格式：
-```
-[综合评级] 综合得分 X.X/10 | 可信度：[🟢/🟡/🔴]
-
-核心优势：[1–2句，最强的维度]
-主要风险：[1–2句，最弱的维度或信息缺口]
-建议行动：[具体可操作的下一步，如"优先联系，提及其2025年XXX论文"/"建议先查小木虫后再决定"]
-```
-
----
-
-## 第五步：输出 Excel 结构
-
-读取 xlsx SKILL.md 后生成 Excel 文件（文件名：`advisor_final_ranking_[日期].xlsx`）。
-
-### Sheet 1：最终综合排名（核心表）
-
-列顺序：
-1. 最终排名
-2. 综合评分（0–10，2位小数）
-3. 综合评级（⭐⭐⭐/⭐⭐/⭐/⚠️/❌）
-4. 可信度（🟢/🟡/🔴）
-5. 导师姓名
-6. 院校 / 系所
-7. 招生状态（✅/❓/❌）
-8. 研究方向匹配分（来自 advisor-finder）
-9. 学术硬实力分（来自 advisor-detective）
-10. 学术潜力分（null → "未调查"）
-11. 导师人品分（null → "未调查"）
-12. 深度背调分（null → "未调查"）
-13. 各维度权重（权重配置行，位于第二行，不参与排序）
-14. 综合评分计算公式（Excel SUMPRODUCT 公式，引用权重行 × 各维度分列）
-
-**格式：**
-- 按综合评分降序排列
-- 第 1–2 行：标题行 + 权重配置行（冻结前 2 行）
-- 开启 AutoFilter
-- 颜色标注：
-  - 深绿色（#375623）字体 + 浅绿底（#E2EFDA）：综合分 ≥ 8.5
-  - 绿色底（#C6EFCE）：综合分 7–8.4
-  - 黄色底（#FFEB9C）：综合分 5.5–6.9
-  - 橙色底（#FCE4D6）：综合分 4–5.4
-  - 红色底（#FFC7CE）：综合分 < 4 或招生状态 ❌
-
-### Sheet 2：决策建议卡
-
-每位导师（按综合排名顺序）：
-- 导师姓名 + 院校
-- 综合评分 + 评级 + 可信度
-- 核心优势 / 主要风险 / 建议行动
-- 来自 advisor-finder 的套磁角度（引用 Sheet 3 内容）
-
-### Sheet 3：分维度对比热力表
-
-- 行：每位导师
-- 列：匹配度分、硬实力分、潜力分、人品分、背调分、综合分
-- 单元格底色按分值深浅渐变（红 → 绿热力图）
-- 用途：快速识别每位导师的强项和短板
-
-### Sheet 4：权重调整器（动态）
-
-- 权重输入区：用户可在此直接修改各维度权重（%）
-- 归一化提示：自动显示当前权重之和是否 = 100%
-- Sheet 1 的综合评分公式引用此 Sheet 的权重单元格，修改权重后排名自动更新
-
-### Sheet 5：数据汇总来源
-
-- 合并 advisor-finder 和 advisor-detective 的来源记录
-- 注明各维度数据的来源文件和 sheet 名称
-- Disclaimer（同 advisor-finder Sheet 5 格式）
-
----
-
-## 状态文件：EVALUATOR_STATE.md
-
-```markdown
-# Advisor Evaluator State
-
-## 权重配置
-匹配度权重: [X]%
-硬实力权重: [X]%
-潜力权重: [X]% （若 N/A 则为"未参与计算"）
-人品权重: [X]% （若 N/A 则为"未参与计算"）
-背调权重: [X]% （若 N/A 则为"未参与计算"）
-detective 深度: [shallow/medium/high]
-
-## 输入文件
-advisor-finder Excel: [文件路径]
-advisor-detective Excel: [文件路径]
-
-## 综合评分结果
-| 排名 | 导师名 | 综合分 | 评级 | 可信度 |
-|------|--------|--------|------|--------|
-| 1    | ...    | ...    | ...  | ...    |
-
-## 输出文件
-advisor_final_ranking_[日期].xlsx: [文件路径]
-```
-
----
-
-## 关键原则
-
-1. **权重透明** — 所有权重明确记录在 Excel Sheet 4 和状态文件中，用户可随时调整
-2. **null 值安全处理** — 未调查维度不参与计算，权重重新归一化，不影响可比较性
-3. **综合分不掩盖单项红旗** — 即使综合分高，若导师人品评分 ≤ 3，在决策建议中必须明确标红提示
-4. **招生状态优先** — ❌ 已过滤导师在 Sheet 1 中保留但置灰，Sheet 2 决策建议中明确标注"不建议联系（招生明确关闭）"
-5. **公式可复现** — Sheet 1 的综合分必须是 Excel 公式（引用 Sheet 4 权重），不得写死数字
+- Scan for duplicate `advisor_program_id` rows.
+- Verify typed numbers, dates, formulas, filters, frozen panes, wrapping, and
+  conditional formatting.
+- Scan formulas for `#REF!`, `#DIV/0!`, `#VALUE!`, `#NAME?`, and `#N/A`.
+- Confirm every material row contains official application sources and access
+  dates.
+- Stop rather than fabricate missing application facts.

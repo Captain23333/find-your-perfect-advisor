@@ -20,7 +20,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import BinaryIO, Iterable
 
 
 @dataclass(frozen=True)
@@ -62,6 +62,15 @@ SOURCES = (
 
 USER_AGENT = "AdvisorAtlasKnowledgeSync/1.0"
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+")
+DEFAULT_MAX_BYTES = 25 * 1024 * 1024
+CHUNK_SIZE = 1024 * 1024
+GENERATED_FILES = (
+    "community-blacklist-current.pdf",
+    "community-blacklist-current.txt",
+    "community-red-flags-current.txt",
+    "community-knowledge-metadata.json",
+    "community-links.json",
+)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -78,13 +87,46 @@ def sha256_file(path: Path) -> str | None:
     return digest.hexdigest()
 
 
-def download(source: Source, timeout: int) -> tuple[bytes, dict[str, str | int | None]]:
+def read_limited(
+    stream: BinaryIO,
+    *,
+    max_bytes: int,
+    expected_bytes: int | None = None,
+) -> bytes:
+    if expected_bytes is not None and expected_bytes > max_bytes:
+        raise ValueError(
+            f"download declares {expected_bytes} bytes, exceeding limit {max_bytes}"
+        )
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = stream.read(min(CHUNK_SIZE, max_bytes - total + 1))
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(f"download exceeds limit {max_bytes} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def download(
+    source: Source,
+    timeout: int,
+    max_bytes: int,
+) -> tuple[bytes, dict[str, str | int | None]]:
     request = urllib.request.Request(
         source.download_url,
         headers={"User-Agent": USER_AGENT},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        data = response.read()
+        declared_length = response.headers.get("Content-Length")
+        expected_bytes = int(declared_length) if declared_length else None
+        data = read_limited(
+            response,
+            max_bytes=max_bytes,
+            expected_bytes=expected_bytes,
+        )
         headers = {
             "http_status": response.status,
             "final_url": response.geturl(),
@@ -127,34 +169,41 @@ def atomic_write(path: Path, data: bytes) -> None:
             os.unlink(temporary_name)
 
 
-def extract_pdf_text(pdf_path: Path) -> Path | None:
+def extract_pdf_text(pdf_path: Path) -> tuple[Path | None, str]:
     executable = shutil.which("pdftotext")
     output_path = pdf_path.with_suffix(".txt")
     if executable is not None:
         temporary_path = output_path.with_name(f".{output_path.name}.tmp")
-        subprocess.run(
-            [executable, "-layout", str(pdf_path), str(temporary_path)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        text = temporary_path.read_text(encoding="utf-8", errors="replace")
-        atomic_write(output_path, text.encode("utf-8"))
-        temporary_path.unlink(missing_ok=True)
-        return output_path
+        try:
+            subprocess.run(
+                [executable, "-layout", str(pdf_path), str(temporary_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            text = temporary_path.read_text(encoding="utf-8", errors="replace")
+            if not text.strip():
+                raise ValueError("pdftotext produced empty text")
+            atomic_write(output_path, text.encode("utf-8"))
+            return output_path, "pdftotext"
+        finally:
+            temporary_path.unlink(missing_ok=True)
 
     try:
         from pypdf import PdfReader
     except ImportError:
-        return None
+        return None, "unavailable"
 
     reader = PdfReader(str(pdf_path))
     pages = []
     for page_number, page in enumerate(reader.pages, start=1):
         pages.append(f"\n\n--- Page {page_number} ---\n\n")
         pages.append(page.extract_text() or "")
-    atomic_write(output_path, "".join(pages).encode("utf-8"))
-    return output_path
+    text = "".join(pages)
+    if not text.strip():
+        raise ValueError("pypdf produced empty text")
+    atomic_write(output_path, text.encode("utf-8"))
+    return output_path, "pypdf"
 
 
 def clean_url(url: str) -> str:
@@ -194,13 +243,56 @@ def parse_args() -> argparse.Namespace:
         default=90,
         help="Per-download timeout in seconds.",
     )
+    parser.add_argument(
+        "--max-bytes",
+        type=int,
+        default=DEFAULT_MAX_BYTES,
+        help=f"Maximum bytes per source (default: {DEFAULT_MAX_BYTES}).",
+    )
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Delete local snapshots, extracted text, metadata, links, and temp files.",
+    )
     return parser.parse_args()
+
+
+def clear_destination(destination: Path) -> list[str]:
+    removed: list[str] = []
+    for name in GENERATED_FILES:
+        path = destination / name
+        if path.exists():
+            path.unlink()
+            removed.append(name)
+    for pattern in (".community-*.tmp", ".*.tmp"):
+        for path in destination.glob(pattern):
+            if path.is_file():
+                path.unlink()
+                removed.append(path.name)
+    return sorted(set(removed))
 
 
 def main() -> int:
     args = parse_args()
+    if args.timeout <= 0:
+        raise ValueError("--timeout must be positive")
+    if args.max_bytes <= 0:
+        raise ValueError("--max-bytes must be positive")
     destination = args.dest.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
+    if args.clear:
+        print(
+            json.dumps(
+                {
+                    "destination": str(destination),
+                    "removed": clear_destination(destination),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
     fetched_at = datetime.now(timezone.utc).isoformat()
 
     metadata: dict[str, object] = {
@@ -209,9 +301,10 @@ def main() -> int:
         "sources": [],
     }
     searchable_paths: list[Path] = []
+    extraction_failures: list[str] = []
 
     for source in SOURCES:
-        data, response_metadata = download(source, args.timeout)
+        data, response_metadata = download(source, args.timeout, args.max_bytes)
         data = validate(source, data)
         output_path = destination / source.name
         previous_sha256 = sha256_file(output_path)
@@ -234,16 +327,30 @@ def main() -> int:
         searchable_paths.append(output_path)
 
         if source.kind == "pdf":
-            text_path = extract_pdf_text(output_path)
+            extraction_error = None
+            try:
+                text_path, extractor = extract_pdf_text(output_path)
+            except Exception as error:
+                text_path, extractor = None, "failed"
+                extraction_error = str(error)
             if text_path is not None:
                 searchable_paths.append(text_path)
                 source_metadata["text_extract"] = text_path.name
                 source_metadata["text_extract_sha256"] = sha256_file(text_path)
+                source_metadata["text_extract_status"] = "searchable"
+                source_metadata["text_extractor"] = extractor
             else:
                 source_metadata["text_extract"] = None
+                source_metadata["text_extract_status"] = "unavailable"
                 source_metadata["text_extract_note"] = (
-                    "Install pdftotext or pypdf to create a searchable text copy"
+                    "Install pdftotext or project-local pypdf, then rerun. "
+                    "Do not interpret this source as having no matching record."
                 )
+                if extraction_error:
+                    source_metadata["text_extract_error"] = extraction_error
+                extraction_failures.append(source.name)
+        else:
+            source_metadata["text_extract_status"] = "searchable"
 
     links = extract_urls(searchable_paths)
     atomic_write(
@@ -251,6 +358,8 @@ def main() -> int:
         (json.dumps(links, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
     )
     metadata["extracted_link_count"] = len(links)
+    metadata["search_ready"] = not extraction_failures
+    metadata["unsearchable_sources"] = extraction_failures
     atomic_write(
         destination / "community-knowledge-metadata.json",
         (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
@@ -263,9 +372,11 @@ def main() -> int:
             item["name"] for item in metadata["sources"] if item["changed"]
         ],
         "extracted_link_count": len(links),
+        "search_ready": not extraction_failures,
+        "unsearchable_sources": extraction_failures,
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
+    return 2 if extraction_failures else 0
 
 
 if __name__ == "__main__":

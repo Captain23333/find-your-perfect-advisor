@@ -1,199 +1,140 @@
 ---
 name: advisor-pipeline
 description: >
-  导师匹配全流水线编排技能（Advisor Pipeline）。串联 advisor-finder、advisor-detective、advisor-evaluator 三个技能，
-  实现从 CV 到最终导师综合排名的全自动化流程。
-  触发场景：用户说"开始导师匹配"、"帮我找导师"、"从头开始导师筛选"、"走完整个流水线"、"导师pipeline"、"导师匹配流程"。
-  当用户有 CV 并想找导师时，优先触发此技能而非单独触发 advisor-finder。
+  Orchestrate the complete Advisor Atlas workflow from a real CV to a
+  source-backed shortlist, objective application-feasibility screen,
+  user-selected advisor background research, and an application-ready final
+  workbook. Use when the user asks to find advisors, run the full advisor
+  matching process, resume an application project, or coordinate Finder,
+  Detective, and Evaluator.
 ---
 
-# 🎓 导师匹配全流水线 (Advisor Pipeline)
+# Advisor Pipeline
 
-## 流水线概览
+Run one progressive, resumable workflow:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              导师匹配全流水线 (Advisor Pipeline)                   │
-│                                                                 │
-│  📄 CV + 目标                                                    │
-│     ↓                                                           │
-│  ┌──────────────────┐                                           │
-│  │  Phase 1         │  advisor-finder                           │
-│  │  导师发现 & 匹配   │  → ADVISOR_STATE.md                       │
-│  │                  │  → advisor_shortlist_[日期].xlsx           │
-│  └────────┬─────────┘                                           │
-│           ↓  Top 10 导师（默认）                                  │
-│  ┌──────────────────┐                                           │
-│  │  Phase 2         │  advisor-detective                        │
-│  │  深度背景调查      │  → DETECTIVE_STATE.md                     │
-│  │  [用户确认深度]   │  → advisor_detective_[日期].xlsx           │
-│  └────────┬─────────┘                                           │
-│           ↓                                                     │
-│  ┌──────────────────┐                                           │
-│  │  Phase 3         │  advisor-evaluator                        │
-│  │  综合评分 & 排名   │  → EVALUATOR_STATE.md                     │
-│  │  [用户确认权重]   │  → advisor_final_ranking_[日期].xlsx       │
-│  └────────┬─────────┘                                           │
-│           ↓                                                     │
-│  📊 最终导师综合排名（含决策建议）                                   │
-└─────────────────────────────────────────────────────────────────┘
+```text
+Intake
+  -> Finder broad discovery
+  -> Finder research-fit shortlist
+  -> Finder objective application feasibility
+  -> user selects advisor-program rows and investigation sections
+  -> Detective selected-section research
+  -> Evaluator and application-ready workbook
 ```
 
----
+Do not create a late, independent application-requirements scrape. Capture facts
+when encountered and fill only shortlist gaps before Detective.
 
-## 流水线执行规则
+## Shared contract
 
-### 原则一：技能串联，状态共享
+Read `references/data-contract.md` before writing project state.
 
-三个技能共享同一工作目录下的状态文件：
-- `ADVISOR_STATE.md` — advisor-finder 输出，advisor-detective 读取
-- `DETECTIVE_STATE.md` — advisor-detective 输出，advisor-evaluator 读取
-- `EVALUATOR_STATE.md` — advisor-evaluator 输出（最终结果）
+Use:
 
-每个技能启动前，检查上游状态文件是否存在并包含有效数据。
+- `project.json`
+- `status.json`
+- `outputs/candidates.json`
+- `outputs/advisor_records.json`
+- `outputs/program_records.json`
+- `outputs/evidence.json`
 
-### 原则二：每个 Phase 结束后向用户汇报
+The JSON files are authoritative. Markdown state files are resumable human
+summaries only.
 
-Phase 1 完成后：
-```
-✅ Phase 1 完成：advisor-finder
+## Status
 
-找到 [N] 位候选导师，Top 10 按匹配分排序如下：
-[简洁列出 Top 10：排名 | 姓名 | 院校 | 匹配分 | 招生状态]
+Use:
 
-→ 输出文件：advisor_shortlist_[日期].xlsx
-→ 准备进入 Phase 2（导师深度背调）
-
-[展示 advisor-detective 的启动确认提示，等待用户选择深度]
-```
-
-Phase 2 完成后：
-```
-✅ Phase 2 完成：advisor-detective
-
-已调查 [N] 位导师，关键发现：
-· 学术能力 Top 3：[姓名] ([分]分)、[姓名] ([分]分)、[姓名] ([分]分)
-· 发现红旗：[N] 位导师有需注意信号（详见 Sheet 3）
-· 评价信息不足：[N] 位导师无公开学生评价
-
-→ 输出文件：advisor_detective_[日期].xlsx
-→ 准备进入 Phase 3（综合评分）
-
-[展示 advisor-evaluator 的权重确认提示，等待用户确认]
+```json
+{
+  "schemaVersion": 2,
+  "phase": "intake|finder|detective|evaluator|completed",
+  "stage": "intake|discovery|research_fit|objective_screen|selection|investigation|ranking|completed",
+  "candidateCount": 0,
+  "shortlistCount": 0,
+  "objectiveReadyCount": 0,
+  "selectedCount": 0,
+  "evidenceCount": 0,
+  "evidenceCoverage": 0,
+  "rankingCount": 0,
+  "updatedAt": "ISO-8601"
+}
 ```
 
-Phase 3 完成后：
-```
-✅ 全流水线完成！
+Write real counts from artifacts. Do not populate demonstration values.
 
-🏆 综合排名 Top 5：
-[排名 | 导师名 | 院校 | 综合分 | 评级]
+## Phase 1: Advisor Finder
 
-→ 最终输出：advisor_final_ranking_[日期].xlsx
-   · Sheet 1：综合排名（含 Excel 公式，可调整权重）
-   · Sheet 2：每位导师决策建议
-   · Sheet 3：分维度热力图
-   · Sheet 4：权重调整器（可直接修改）
+Require a real CV, degree, intake, target, and weighted interests. Invoke
+Advisor Finder without duplicating its instructions.
 
-后续可进行：陶瓷信撰写（coming soon）
-```
+Completion requires:
 
-### 原则三：允许从任意 Phase 入口启动
+- Real advisor and program records.
+- Research-fit shortlist.
+- Objective feasibility for shortlisted advisor-program combinations.
+- `outputs/candidates.json` for the Web UI.
 
-用户可能已经完成了部分阶段：
+Pause for user selection after the objective screen.
 
-| 用户说 | 行为 |
-|--------|------|
-| "从头开始" | 从 Phase 1 开始 |
-| "我已经有 advisor-finder 的结果了，帮我做背调" | 直接进入 Phase 2，读取已有状态文件 |
-| "背调完了，帮我综合打分" | 直接进入 Phase 3，读取 detective 文件 |
-| "我只想用 advisor-finder" | 仅执行 Phase 1，说明其他 Phase 可选 |
+## Selection gate
 
----
+Persist:
 
-## Phase 1：advisor-finder
+- Exact `selected_advisor_program_ids`.
+- Exact `selected_sections`.
+- Community-source consent.
 
-**直接调用 advisor-finder 技能**，无需重复其逻辑。
+Show a warning when the user deselects default Finder sections. Show a
+qualitative cost warning based on selected advisor count and Detective sections.
 
-Phase 1 入口检查清单：
-- [ ] 用户是否已提供 CV？（必须）
-- [ ] 目标（TARGET）是否明确？（必须）
-- [ ] 研究兴趣权重是否已填写？（必须）
-- [ ] 目标学位是否明确？（必须）
+Never infer selected advisors from Top N when exact user selections exist.
 
-如有缺失，先收集这些信息再启动。
+## Phase 2: Advisor Detective
 
-Phase 1 完成信号：`ADVISOR_STATE.md` 中 Phase 5 完成，`advisor_shortlist_*.xlsx` 已生成。
+Invoke Advisor Detective only for exact selected IDs and selected sections.
 
----
+If a reputation-related section is selected:
 
-## Phase 2：advisor-detective
+- Ask separately for community-source consent.
+- Refresh local snapshots only after consent and only when needed.
+- Continue other public-source research even when community access is declined
+  or unavailable.
 
-**直接调用 advisor-detective 技能**。
+Completion requires a result or explicit gap for every selected
+advisor-section pair.
 
-Phase 2 入口：
-1. 读取 `ADVISOR_STATE.md` 中的 Scores 表，按加权总分降序取 Top N（默认 10）
-2. 提取：导师名、院校、研究方向、主页URL、Scholar URL、匹配分、招生状态
-3. 将列表传递给 advisor-detective 技能作为调查对象
-4. 按 advisor-detective 的本地社区知识库规则检查快照时效性；快照缺失或超过 24 小时时先运行同步脚本
-5. 展示 advisor-detective 的启动确认提示
+## Phase 3: Advisor Evaluator
 
-Phase 2 完成信号：`DETECTIVE_STATE.md` 所有导师状态为"完成"，`advisor_detective_*.xlsx` 已生成。
+Invoke Advisor Evaluator using shared structured records. Do not pass a
+shallow/medium/high level.
 
----
+Completion requires:
 
-## Phase 3：advisor-evaluator
+- Separate research fit, objective feasibility, and advisor-suitability
+  conclusions.
+- An application-ready workbook.
+- Source, freshness, missing-field, and risk checks.
 
-**直接调用 advisor-evaluator 技能**。
+## Resume behavior
 
-Phase 3 入口：
-1. 确认 `advisor_shortlist_*.xlsx` 和 `advisor_detective_*.xlsx` 均已生成
-2. 传入 advisor-detective 的深度信息（shallow/medium/high）以自动选择合适权重配置
-3. 展示权重确认提示
+At startup:
 
-Phase 3 完成信号：`EVALUATOR_STATE.md` 已记录最终排名，`advisor_final_ranking_*.xlsx` 已生成。
+1. Read status and structured outputs.
+2. Validate schema versions and stable IDs.
+3. Resume the first incomplete stage.
+4. Reuse current sources.
+5. Query only missing, stale, or conflicting fields.
 
----
+Never restart the whole workflow merely because an output workbook is missing;
+regenerate the workbook from structured state.
 
-## 文件命名约定
+## Safety
 
-所有文件保存在同一工作目录，命名格式：
-
-```
-ADVISOR_STATE.md              ← Phase 1 状态
-DETECTIVE_STATE.md            ← Phase 2 状态
-EVALUATOR_STATE.md            ← Phase 3 状态
-advisor_shortlist_YYYYMMDD.xlsx       ← Phase 1 输出
-advisor_detective_YYYYMMDD.xlsx       ← Phase 2 输出
-advisor_final_ranking_YYYYMMDD.xlsx   ← Phase 3 输出（最终结果）
-```
-
----
-
-## 错误处理
-
-| 错误情况 | 处理方式 |
-|----------|---------|
-| Phase 1 中 advisor-finder 只找到 < 5 位候选 | 提示用户扩大 TARGET 范围后继续 |
-| Phase 2 某导师完全找不到公开信息 | 所有维度填"无信息"，但不跳过该导师 |
-| Phase 3 输入文件导师名不对齐 | 手动对应，并在 EVALUATOR_STATE.md 中记录映射关系 |
-| 用户中途中断 | 状态文件保留当前进度，下次可从中断处恢复 |
-
----
-
-## 快速参考：技能文件路径
-
-运行此流水线时依次调用以下技能：
-
-1. `advisor-finder/SKILL.md` — 导师发现与匹配
-2. `advisor-detective/SKILL.md` — 导师深度背调
-3. `advisor-evaluator/SKILL.md` — 综合评分与最终排名
-
----
-
-## 未来扩展（规划中）
-
-- **Phase 4：陶瓷信撰写（Cold Email Writer）** — 根据综合排名 Top N 和套磁角度，自动生成个性化陶瓷信草稿
-- **Phase 5：Research Proposal 辅助（RP Helper）** — 基于目标导师的研究方向，辅助写作 Research Proposal
-
-*后续版本将在此 pipeline 中新增 Phase 4 和 Phase 5 入口。*
+- Do not send email, submit applications, commit, push, or publish.
+- Keep CVs, project state, downloaded community snapshots, and generated outputs
+  local and Git-ignored.
+- Do not treat public accessibility as redistribution permission.
+- Do not bundle or commit third-party community snapshot contents.
+- Stop and state the missing input instead of inventing application facts.

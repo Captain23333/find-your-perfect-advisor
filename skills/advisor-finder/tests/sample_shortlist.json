@@ -1,0 +1,54 @@
+{
+  "interests": [
+    {"name": "Human-AI Interaction", "weight": 70},
+    {"name": "AI for Health", "weight": 30}
+  ],
+  "candidates": [
+    {
+      "rank": 1,
+      "advisorProgramId": "example-cs-phd-prof-example",
+      "name": "Prof. Example",
+      "school": "Example University",
+      "program": "PhD in Computer Science",
+      "fitScores": {"Human-AI Interaction": 9, "AI for Health": 8},
+      "fit": 8.7,
+      "status": "招收 PhD，funding 待确认",
+      "feasibility": "eligible",
+      "feasibilityReasons": ["目标学位符合", "截止日期尚未经过"],
+      "researchAndPapers": ["Human-AI Collaboration", "2026 Example Paper"],
+      "advisorContactRequirements": ["邮件标题注明 PhD 2027"],
+      "homepage": "https://example.edu/advisor",
+      "email": "advisor@example.edu",
+      "missingFields": ["Funding"]
+    }
+  ],
+  "programs": [
+    {
+      "programId": "example-cs-phd-2027",
+      "schoolName": "Example University",
+      "qsRank": 42,
+      "qsEdition": "2027",
+      "programNameZh": "示例计算机科学博士项目",
+      "programNameEn": "PhD in Computer Science",
+      "degree": "PhD",
+      "intake": "2027 Fall",
+      "deadline": "2026-12-01",
+      "tuition": "USD 25,000 / year",
+      "scholarships": ["Example Fellowship"],
+      "applicationMaterials": ["CV", "成绩单", "推荐信"],
+      "rpRequirement": "官方页面未说明",
+      "lastVerifiedAt": "2026-07-29",
+      "officialSources": ["https://example.edu/phd"]
+    }
+  ],
+  "sources": [
+    {
+      "entity": "example-cs-phd-2027",
+      "field": "deadline",
+      "status": "verified",
+      "url": "https://example.edu/phd",
+      "accessedAt": "2026-07-29",
+      "excerpt": "Applications close on December 1."
+    }
+  ]
+}

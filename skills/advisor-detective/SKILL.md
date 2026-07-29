@@ -1,403 +1,122 @@
 ---
 name: advisor-detective
 description: >
-  导师深度调查与套磁情报技能（Advisor Detective）。在 advisor-finder 完成导师匹配排序后，对 Top N 位导师调查近三年论文内容、主页近期项目、学术社交动态和学生评价。
-  所有深度均检查论文摘要与可访问的结论、个人/实验室主页、小红书、X/Twitter 和 ResearchGate；medium/high 进一步交叉验证导师人品、学术潜力和重大动态。
-  输出维度对齐的结构化 Excel、证据链接、近期研究主线和可用于个性化联系邮件的具体切入点。
-  触发场景：advisor-finder 完成后，用户想对候选导师进行深度背调；或用户说"调查导师"、"背调导师"、"查一下这个导师"。
+  Perform evidence-backed background research on user-selected academic
+  advisors after Advisor Finder. Use when the user asks to investigate, compare,
+  or backcheck specific advisors. Research only explicitly selected information
+  sections, preserve exact advisor-program identities, optionally consult
+  consented local community sources, and report supported findings, conflicts,
+  risks, and information gaps without treating anonymous claims as facts.
 ---
 
-# 🕵️ 导师深度调查技能 (Advisor Detective)
+# Advisor Detective
 
-## 技能定位
+Investigate whether a shortlisted advisor is suitable for the user. Do not
+repeat objective program research already completed by Advisor Finder.
 
-本技能是 **advisor-finder → advisor-detective → advisor-evaluator** 三阶段导师匹配流水线的**第二阶段**。
+## Required inputs
 
-- **上游输入**：advisor-finder 产出的 Excel 或 `ADVISOR_STATE.md`（含导师名单及匹配分数）
-- **本技能目标**：既评估导师，也查明导师最近在做什么，并把可靠证据转化为个性化套磁切入点
-- **本技能输出**：结构化 Excel（维度对齐，所有导师同一套列）+ 论文精读与动态证据 + 更新后的 `DETECTIVE_STATE.md`
-- **下游**：advisor-evaluator 读取本技能输出进行综合评分
+Read:
 
----
+- `outputs/advisor_records.json`
+- `outputs/program_records.json`
+- `outputs/evidence.json`
+- `project.json`
 
-## 第一步：启动确认（必须执行，不可跳过）
+If the full skill set is present, read
+`../advisor-pipeline/references/data-contract.md`. Always read
+`references/investigation-sections.md`. Read
+`references/community-sources.md` only when
+`guidance_group_ecology` or another reputation-related section is selected.
 
-**在进行任何调查前，向用户展示以下内容并等待明确同意：**
+Require exact `selected_advisor_program_ids` and `selected_sections`. Validate
+each ID against the Finder output. A count without exact IDs is invalid.
 
----
+## Confirmation gate
 
-```
-⚠️  导师深度调查 — 启动确认
+Before any network research or community-cache refresh, show:
 
-本次将对 [N] 位导师（默认 Top 10）进行网络信息深度搜索与综合评估。
+- Exact selected advisors and programs.
+- Exact selected sections.
+- A qualitative cost warning based on advisor count and sections.
+- Whether local community sources are requested.
 
-由于需要建立近三年论文清单、阅读摘要与可访问的结论，并检查主页项目和多个社交平台，
-实际消耗取决于导师近三年发文量，通常明显高于 advisor-finder，请确认后继续。
+Proceed only after the selection is persisted. Community snapshots additionally
+require `community_sources.consented: true`. If consent is false, continue other
+selected research without downloading them.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔍  SHALLOW（快速筛查）
-  · 评估内容：学术硬实力 + 学生去向 + 近三年论文内容 + 近期研究/项目主线
-  · 必查来源：Scholar/论文原文、个人与实验室主页、小红书、X/Twitter、ResearchGate
-  · 调查方式：完成全部来源基础扫描，社会评价只记录公开信号，不做人品评分
+## Research workflow
 
-🔍🔍  MEDIUM（重点候选）
-  · 评估内容：Shallow 全部 + 学术潜力 + 导师人品 + 研究动态交叉验证
-  · 搜索范围：深入小红书/X/ResearchGate，并查小木虫、知乎、一亩三分地、Reddit、Rate My Professors、论文署名
-  · 调查方式：区分一手经历、转述和匿名评价，形成证据强度判断
+For each selected advisor:
 
-🔍🔍🔍  HIGH（最终定向）
-  · 评估内容：Medium 全部 + 荣誉/业界合作/对国际生态度/近期重大动态时间线
-  · 搜索范围：+ 学校公告、基金官网、新闻媒体、学术社区、LinkedIn 和企业合作信息
-  · 调查方式：对关键判断进行多源核验，给出更完整的风险与套磁策略
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Read current Finder facts and evidence.
+2. Skip unselected sections and write `用户未选择复核`.
+3. Reuse current sources and query only missing, stale, or conflicting evidence.
+4. Separate official facts, identified firsthand accounts, anonymous leads, and
+   same-source copies.
+5. Record short excerpts, URL, access date, identity status, and which finding
+   the source supports.
+6. Preserve rebuttals, corrections, dates, and conflicting accounts.
+7. Write selected-section results back to `advisor_records.json` and evidence
+   rows to `outputs/evidence.json`.
 
-请确认以下信息：
-1. 调查深度：shallow / medium / high（必选）
-2. 调查导师数量：默认 Top 10，可修改（建议不超过 15）
-3. 额外关注点（可选）：如"特别关注是否招收国际生"、"重点查XX大学的导师"
+If a new official application fact appears incidentally, update the shared
+program or advisor record. Do not restart a complete application search.
 
-确认后，调查将立即开始。
-```
+## Community knowledge
 
----
+When a reputation-related section is selected and consent is true:
 
-收到明确确认并获得深度选择后方可继续。将确认信息记录到 `DETECTIVE_STATE.md`。
+1. Inspect `references/community-knowledge-metadata.json`.
+2. Refresh only when missing, explicitly requested, or stale under the current
+   policy.
+3. Require `search_ready: true` before interpreting the PDF source as searched.
+4. Search local text by advisor full name, Chinese name, institution, and lab.
+5. Open relevant original links when accessible.
+6. Continue with relevant public sources such as X/Twitter, 小红书, Reddit, Rate
+   My Professors, institutional records, or identified public accounts.
 
----
+Use the script path relative to this skill:
 
-## 维度全表（所有导师统一，不得增减列）
-
-**规则：**
-- 调查过但无信息 → 填 `"无信息"`
-- 因深度不足未调查 → 填 `"未调查（需 medium/high）"` 或 `"未调查（需 high）"`
-- 绝不省略任何列
-
-### 第一组：基础信息（所有深度必填）
-
-| 列名 | 说明 |
-|------|------|
-| 姓名 | 导师全名（英文全名 + 中文名如有） |
-| 院校 | 所在高校全称 |
-| 系所/学院 | 具体院系名称 |
-| 职称/级别 | 助理教授 / 副教授 / 教授 / 讲席教授等 |
-| 研究方向 | 主要研究方向（简洁列出 3–5 条） |
-| 主页 URL | 个人主页完整链接 |
-| Google Scholar URL | Scholar 主页链接 |
-| X/Twitter URL | 经姓名、学校、主页链接等确认的本人或实验室账号；无法确认则填"无信息" |
-| ResearchGate URL | 经身份核验的 ResearchGate 主页；无法确认则填"无信息" |
-| 邮箱 | 公开联系邮箱（无则填"无信息"） |
-| advisor-finder 匹配分 | 来自上游 advisor-finder 的加权匹配得分（0–10） |
-| 招生状态 | 来自 advisor-finder 的招生状态（✅/❓/❌） |
-
-### 第二组：学术硬实力（Shallow 及以上）
-
-| 列名 | 说明 |
-|------|------|
-| H 指数 | 来自 Google Scholar（注明查询日期） |
-| 总引用数 | 来自 Google Scholar |
-| 近 3 年发文数 | 含当前年份，近 3 年发表论文总数 |
-| 近 3 年顶会/顶刊数 | 近 3 年在本领域顶级会议或期刊发表的论文数量 |
-| 论文内容核验覆盖 | 近 3 年论文总数 ‖ 已读摘要数 ‖ 已读结论数 ‖ 仅元数据数 |
-| 主要发表期刊/会议 | 常见发表场所（按频次列举） |
-| 最高引用论文 | 被引最多的论文标题 + 引用数 |
-| Grant/科研经费概况 | 已知主持的科研项目名称/来源/级别（无公开信息则填"无信息"） |
-| 实验室在读学生规模 | 当前博士生 + 博后数量（来自实验室主页） |
-| 已知毕业生去向 | 可找到的历届毕业生去向（企业名/高校名，无则"无信息"） |
-| 学术能力评分 | 0–10 分，附 1–2 句评分依据 |
-
-### 第三组：学术潜力（Medium 及以上；Shallow 填"未调查（需 medium/high）"）
-
-| 列名 | 说明 |
-|------|------|
-| 发文趋势 | 近 3 年 vs 前 3 年发文数对比：增长 / 持平 / 下降（附数据） |
-| 是否开辟新研究方向 | 近 2 年研究是否有明显新突破点或方向转型（是/否 + 简述） |
-| 师承背景 | 导师的导师是谁？学术谱系（能找到则填，否则"无信息"） |
-| 合作者层次 | 是否与领域顶尖学者合作？代表性合作者 1–3 人 |
-| 科研经费趋势 | 近期是否有新立项/资助（信号：仍在活跃研究中） |
-| 学术潜力评分 | 0–10 分，附 1–2 句评分依据 |
-
-### 第四组：导师人品（Medium 及以上；Shallow 填"未调查（需 medium/high）"）
-
-| 列名 | 说明 |
-|------|------|
-| 学生评价来源 | 找到评价的平台（小木虫/知乎/一亩三分地/Rate My Professors/Twitter 等） |
-| 学生评价摘要 | 正面关键词 ‖ 负面关键词 ‖ 典型评论摘录（标注来源）；无评价则填"无公开评价" |
-| 学生第一作者比例 | 估算：导师论文中学生担任第一/通讯作者的比例 |
-| 毕业时长估算 | 平均博士毕业时长（来源：学生公开信息或一作论文时间跨度） |
-| 是否亲自指导 | 是否有具体带学生记录（而非完全委托博后代劳）；有/否/无法判断 |
-| 已知红旗信号 | 撤稿记录/学生投诉/学术不端/其他负面事件（Retraction Watch 等来源）；无则填"无已知红旗" |
-| 导师人品评分 | 0–10 分，附 1–2 句评分依据 |
-
-### 第五组：深度背调（High 专属；Medium/Shallow 填"未调查（需 high）"）
-
-| 列名 | 说明 |
-|------|------|
-| 学术荣誉/获奖 | 院士/Fellow/重要奖项/邀请报告等 |
-| 业界合作/产业影响 | 是否有企业合作、创业经历、顾问职位等 |
-| 对国际学生的态度 | 主页是否明确招收国际生？历史上是否有国际生毕业？ |
-| 近期重大动态 | 近 1 年内的新闻/公告/重大变化（换校/新项目/获奖） |
-| 合作者社群质量 | 长期合作者的学术地位与整体声誉评估 |
-| 深度背调评分 | 0–10 分，附 1–2 句评分依据 |
-
-### 第六组：研究动态与套磁情报（所有深度必填）
-
-| 列名 | 说明 |
-|------|------|
-| 近 3 年研究主线 | 基于论文摘要与可访问的结论归纳 2–4 条主线，不得只根据标题猜测 |
-| 近 3 年代表性发现 | 归纳最能体现近期工作的 2–3 项方法或结论，并注明对应论文 |
-| 近期方向变化 | 延续 / 新增 / 转型 / 无法判断；说明论文、项目或社交动态证据 |
-| 主页近期项目与更新时间 | Projects/Research/News/Open Positions 等页面中的近期项目、招生或更新日期 |
-| X/Twitter 近期学术动态 | 近 12–18 个月的新论文、项目、招聘、基金、会议或持续关注主题 |
-| ResearchGate 近期学术动态 | 近期论文、Project、Research interests、Update 或合作动态 |
-| 小红书相关信号 | 学生/申请者经历、实验室氛围、指导方式或招生信息；注明一手/转述/匿名及日期 |
-| 情报可信度 | A/B/C/D；按下方证据分级给出整体判断 |
-| 套磁切入点 | 2–3 个“事实证据 → 申请者经历连接 → 建议邮件表达”，不得编造申请者经历 |
-
----
-
-## 搜索策略
-
-### 必查来源与用途
-
-“优先查找”表示必须尽早尝试检索，不表示可以用低可信度信息覆盖官方证据。
-
-1. **个人主页 / 实验室主页** — 身份、近期项目、News、学生、招生和更新时间
-2. **Google Scholar + 论文原文/出版社/arXiv** — 建立近三年论文清单并读取摘要与结论
-3. **dblp / Semantic Scholar / OpenAlex** — 交叉验证论文年份、发表场所和遗漏项
-4. **小红书** — 优先检索中文学生/申请者经历、实验室氛围、指导和招生信号
-5. **X/Twitter** — 优先检查近 12–18 个月的新论文、项目、招聘、基金和会议动态
-6. **ResearchGate** — 检查近期论文、Project、Research interests、Update 和合作动态
-7. **小木虫 / 知乎 / 一亩三分地 / Reddit / Rate My Professors**（Medium+ 深入）— 学生评价
-8. **Retraction Watch**（Medium+）— 撤稿和学术诚信记录
-9. **学校公告 / 基金官网 / 新闻 / LinkedIn / 企业官网**（High）— 重大动态与合作核验
-
-### 每位导师搜索序列
-
-```
-[所有深度必须完成]
-S1 身份确认：全名 + 学校 + 院系；核验主页、Scholar、X/Twitter、ResearchGate 是否属于同一人
-S2 主页检查：抓取个人/实验室主页及 Projects、Research、News、Publications、Open Positions 页面
-S3 论文清单：列出当前年份及前两个完整年份的全部可确认论文，并用多个学术来源去重
-S4 内容精读：逐篇读取摘要；全文可访问时定位并读取结论/讨论，记录方法、发现和方向标签
-S5 小红书："[中文名/英文名] [学校/实验室] 导师"、"[姓名] 博士/套磁/组内/人品"
-S6 X/Twitter：确认本人/实验室账号，检查近 12–18 个月论文、项目、招聘、基金、会议动态
-S7 ResearchGate：检查 Publications、Projects、Research interests 和 Updates
-S8 综合归纳：用论文内容 + 主页项目 + 学术社交动态形成近期研究主线与套磁切入点
-
-[Medium 追加]
-M1 深挖小红书、小木虫、知乎、一亩三分地、Reddit、Rate My Professors 的学生评价
-M2 区分一手经历、转述和匿名评价；对重复出现的信号进行跨平台核验
-M3 检查论文署名：估算学生第一作者比例，并结合学生主页判断毕业时长与去向
-M4 查询撤稿、投诉或学术诚信记录，不以单条匿名帖子直接定性
-
-[High 追加]
-H1 用“最近 12 个月/当前年份”动态检索奖项、基金、换校、新项目、招聘和重大新闻
-H2 检查企业合作、创业、顾问职位和长期合作者网络
-H3 核验国际学生经历、招生态度和近期实验室人员变化
-H4 将论文、主页、X/Twitter、ResearchGate、学校和基金动态整理成时间线并交叉验证
+```bash
+python3 scripts/sync_community_knowledge.py
 ```
 
-### 近三年论文内容核验规则
+If no PDF extractor exists, explain the project-local dependency option and
+wait for user consent before installing anything. A non-searchable source must
+be reported as `未完成检索`, never `未发现记录`.
 
-1. 建立完整清单后再归纳研究方向，不从少量代表论文外推全部工作。
-2. 对每篇可确认论文记录标题、年份、场所、研究问题、主要方法、摘要要点、结论要点和来源 URL。
-3. 能访问全文时必须检查摘要和结论/讨论；只能访问摘要时标注 `仅基于摘要`；无摘要时标注 `仅元数据，内容未核实`。
-4. 区分导师本人主导的研究与仅署名合作；结合作者顺序、实验室成员和项目页面谨慎判断。
-5. 在主表填写覆盖数：`论文总数 / 已读摘要数 / 已读结论数 / 仅元数据数`。不得声称已读未访问的内容。
-6. 总结论文含义，不大段复制摘要或结论原文。
+## Evidence and privacy
 
-### 主页与学术社交动态规则
+- Anonymous material is an `anonymous_lead`, not a verified fact.
+- Mirrors and reposts are `same_source_copy`, not extra corroboration.
+- Do not automatically change a score because an advisor appears on a list.
+- Do not expose student names, contact details, health information, private
+  family information, or details that facilitate doxxing.
+- Severe claims require a primary record, an identified firsthand account, or
+  multiple genuinely independent sources before becoming a supported risk.
+- When evidence remains weak, write a neutral lead and a concrete verification
+  step.
 
-- 检查主页导航和子页面，不只读取首页；记录 Projects/News/Open Positions 的最后可见日期。
-- X/Twitter 与 ResearchGate 账号必须通过学校、研究方向、头像、主页互链等信息核验；同名但无法确认时填 `账号未确认`。
-- 区分导师原创动态、实验室动态和单纯转发；转发只能作为兴趣信号，不能写成导师自己的项目。
-- 平台要求登录、拒绝访问或结果不可见时，记录 `平台受限，未完成核验`，不得写成“没有动态”。
-- 搜索不到近期动态不能直接推断导师不活跃；用论文、主页、学校和基金记录继续核验。
+## Output
 
-### 小红书与学生评价证据规则
+Maintain a compact `DETECTIVE_STATE.md` summary containing:
 
-- 记录帖子日期、作者身份线索、是否亲历、原始链接和可核验细节；明确标记 `一手经历 / 转述 / 匿名推测`。
-- 单条匿名评价只能作为弱信号，不能单独触发低人品评分或确定性结论。
-- 多个相互独立来源出现一致描述时，才提升证据强度；转载或互相引用不算独立来源。
-- 不把姓名相同、学校不同或身份无法匹配的内容归给目标导师。
+- Selected advisor-program IDs.
+- Selected sections.
+- Community consent and cache search status.
+- Per-advisor completion and evidence count.
+- Access limitations and unresolved conflicts.
 
-### 证据可信度分级
+Generate `advisor_detective_YYYYMMDD.xlsx` with a deterministic builder. Include
+only the selected-section result columns plus an explicit configuration and
+evidence sheet. Mark unselected sections as `用户未选择复核`.
 
-| 等级 | 证据类型 |
-|------|----------|
-| A | 论文原文、导师/实验室主页、学校公告、基金官网 |
-| B | 已核验的导师本人或实验室 X/Twitter、ResearchGate、公开演讲 |
-| C | 身份可确认的学生/校友公开经历或多个独立来源一致的信息 |
-| D | 匿名帖子、无法验证身份的评论、转述或单一社交平台传闻 |
+## Completion
 
-### 主页过时处理规则
+Complete only when every selected advisor has:
 
-- 若主页最后更新早于当前年份 2 年及以上，标注主页可能过时。
-- 切换论文原文、Google Scholar、学校页面、X/Twitter 和 ResearchGate 为近期动态来源，并记录各来源查询日期。
-- 在 Excel 注明：`主页可能过时（末次可见更新：[日期]），近期判断来自：[来源]`。
-
----
-
-## 本地社区知识库（按需读取）
-
-调查具体导师时，读取 `references/community-sources.md`，并按其中的检索、证据和隐私规则使用本地社区评价快照。
-
-1. 仅在目标导师姓名、学校或实验室命中时读取相关上下文，不一次性加载完整榜单。
-2. 若 `references/community-knowledge-metadata.json` 缺失或抓取时间超过 24 小时，运行：
-
-   ```bash
-   python3 scripts/sync_community_knowledge.py
-   ```
-
-3. 将匿名榜单、评论平台和它们的镜像默认视为 D 级线索。镜像、转载和同源引用不算独立来源。
-4. 不因导师出现在红榜或黑榜中直接改变评分。保留 rebuttal、争议标签和更正，并用官方来源或身份可确认的一手经历交叉核验。
-5. 不输出学生姓名、联系方式、健康信息或其他可能导致开盒的细节。
-
----
-
-## 评分标准
-
-### 学术能力评分（0–10）
-
-| 分段 | 标准（参考，结合领域具体情况调整） |
-|------|------|
-| 9–10 | H ≥ 30，近 3 年顶会/顶刊 ≥ 5 篇，毕业生进顶尖高校/科技巨头 |
-| 7–8 | H 15–30，近 3 年顶会 3–5 篇，学生去向良好 |
-| 5–6 | H 8–15，发表稳定，去向一般 |
-| 3–4 | H < 8，发表较少或期刊质量一般 |
-| 1–2 | 近 3 年几乎无发表，引用极少 |
-
-结合学科差异解释数量指标，并使用论文内容核验研究质量与活跃方向；不得仅凭标题、H 指数或发文数评分。
-
-### 学术潜力评分（0–10，仅 Medium+）
-
-| 分段 | 标准 |
-|------|------|
-| 9–10 | 发文量快速增长，与领域大牛合作，近期开辟新方向，资助持续获批 |
-| 7–8 | 明显上升趋势，或新生代领域代表人物 |
-| 5–6 | 稳定发展，无明显增减 |
-| 3–4 | 发文趋于平缓，合作圈固定无扩展 |
-| 1–2 | 活跃度明显下降，无近期资助记录 |
-
-使用论文内容、主页项目、基金和已核验的学术社交动态共同判断方向变化；单纯转发不计为新项目。
-
-### 导师人品评分（0–10，仅 Medium+）
-
-| 分段 | 标准 |
-|------|------|
-| 9–10 | 评价高度正面，毕业时长正常，学生多担任第一/通讯作者，零已知红旗 |
-| 7–8 | 评价整体正面，偶有中性评论，无重大红旗 |
-| 5–6 | 评价褒贬参半，或信息严重不足无法判断（标注"信息不足"） |
-| 3–4 | 若干负面评价，或毕业时长明显偏长（> 6 年普遍现象） |
-| 1–2 | 明确学生投诉、撤稿记录、或已知严重负面事件 |
-
-单条匿名评价不得直接降低评分；严重负面结论必须有可核验的一手来源或多个独立来源支持。
-
-### 深度背调评分（0–10，仅 High）
-
-| 分段 | 标准 |
-|------|------|
-| 9–10 | 多项荣誉加持，业界合作广泛，对国际生明确友好，近期动态活跃 |
-| 7–8 | 有一定荣誉或业界影响，无明显负面 |
-| 5–6 | 一般水平，信息有限 |
-| 3–4 | 缺少荣誉，业界影响弱，或有轻微负面信号 |
-| 1–2 | 有已知严重负面事件（学术不端/重大丑闻等） |
-
----
-
-## 输出 Excel 结构
-
-读取可用的 xlsx 工作簿处理规范后生成 Excel 文件（文件名：`advisor_detective_[日期].xlsx`）。
-
-### Sheet 1：导师调查汇总（主表）
-
-- 每行一位导师，列按上方维度表顺序排列（第一组至第六组全部列出）
-- 首行冻结，开启 AutoFilter
-- 颜色规则（按各维度评分列）：
-  - 绿色（#C6EFCE）：评分 ≥ 8
-  - 黄色（#FFEB9C）：评分 5–7
-  - 红色（#FFC7CE）：评分 ≤ 4
-  - 灰色（#D9D9D9）：单元格内容为"未调查"
-
-### Sheet 2：近三年论文精读
-
-- 每篇论文单独一行。
-- 列：导师名 ‖ 论文标题 ‖ 年份 ‖ 发表场所 ‖ 研究问题 ‖ 主要方法 ‖ 摘要要点 ‖ 结论要点 ‖ 方向标签 ‖ 内容可用状态 ‖ 来源 URL
-- 内容可用状态统一使用：`摘要+结论已读` / `仅基于摘要` / `仅元数据，内容未核实`。
-
-### Sheet 3：近期动态与套磁线索
-
-- 每条动态或切入点单独一行。
-- 列：导师名 ‖ 日期 ‖ 动态类型 ‖ 平台/来源 ‖ 动态摘要 ‖ 申请者经历连接 ‖ 建议邮件表达 ‖ 证据等级 ‖ 来源 URL
-- 每位导师提供 2–3 个套磁切入点；缺少申请者经历时填 `待结合申请者 CV`，不得编造。
-
-### Sheet 4：学生评价证据库
-
-- 列：导师名 ‖ 评价来源 ‖ 评价类型（正面/中性/负面） ‖ 一手/转述/匿名 ‖ 证据等级 ‖ 原文摘录 ‖ 链接（如有）
-- 每条评价单独一行
-- 无评价的导师写一行：[导师名] ‖ — ‖ — ‖ — ‖ — ‖ "未找到公开学生评价" ‖ —
-
-### Sheet 5：红旗预警
-
-- 仅列有红旗信号的导师
-- 列：导师名 ‖ 红旗类型 ‖ 具体描述 ‖ 信息来源 ‖ 严重程度（低/中/高）
-- 若所有导师均无红旗，写一行"本次调查未发现红旗信号"
-
-### Sheet 6：数据来源日志
-
-- 每位导师的所有信源 URL 列表
-- 列：导师名 ‖ 数据类别 ‖ 来源 URL ‖ 查询日期 ‖ 访问状态 ‖ 证据等级 ‖ 备注
-
----
-
-## 状态文件：DETECTIVE_STATE.md
-
-全程维护此文件，防止 context 压缩导致丢失进度：
-
-```markdown
-# Advisor Detective State
-
-## 调查配置
-调查深度: [shallow / medium / high]
-调查导师数: [N]
-执行日期: [YYYY-MM-DD]
-额外关注点: [用户指定内容]
-
-## 导师列表（来自 advisor-finder）
-| # | 姓名 | 院校 | advisor-finder 匹配分 | 状态 |
-|---|------|------|----------------------|------|
-| 1 | ...  | ...  | ...                  | 待调查 / 调查中 / 完成 |
-
-## 调查数据（逐一填写）
-### [导师姓名]
-（按维度全表顺序记录原始数据）
-
-论文核验进度: [总数] / [已读摘要] / [已读结论] / [仅元数据]
-主页与近期项目: [已检查 / 受限 / 未检查]
-小红书: [已检查 / 受限 / 未检查]
-X/Twitter: [账号已确认 / 账号未确认 / 受限 / 未检查]
-ResearchGate: [账号已确认 / 账号未确认 / 受限 / 未检查]
-套磁切入点: [已生成 / 待结合申请者 CV / 未完成]
-待核实信息: [...]
-...
-
-## 完成进度
-已完成: [N]/[总数]
-```
-
-每完成一位导师立即更新进度，避免中断后重复工作。
-
----
-
-## 关键原则
-
-1. **维度必须对齐** — 所有导师使用完全相同的列，不因数据缺失而省略任何列
-2. **空值规范严格执行** — 调查后无信息填 `"无信息"`；深度不足未调查填 `"未调查（需 X）"`
-3. **评分必须附依据** — 每个评分列之后必须有 1–2 句说明，绝不只给数字
-4. **拒绝推测人品** — 若无公开学生评价，诚实填 `"无公开评价"`，不基于论文数量推断人品
-5. **论文内容必须核验** — 先建立近三年清单，再读摘要与可访问的结论；明确标记访问边界
-6. **社交平台必须尝试** — 小红书、X/Twitter、ResearchGate 均需记录已查、受限或账号未确认，不得静默跳过
-7. **引用有据** — Sheet 6 中每条事实、评价和套磁切入点必须有对应来源
-8. **低可信度信息不定性** — 匿名帖子和单一传闻只作线索，不直接形成严重负面结论
-9. **主页过时必须标注** — 并切换到论文、学校页面和已核验学术社交账号判断近期状态
-10. **套磁必须具体且真实** — 使用“事实证据 → 申请者经历连接 → 建议表达”，不写泛泛兴趣，不编造经历
+- A result or explicit access/information gap for every selected section.
+- Field-level evidence links.
+- Conflict and privacy checks.
+- No conclusion derived from a failed or skipped source.

@@ -1,0 +1,33 @@
+{
+  "sections": [
+    {"id": "research_output_trend", "label": "研究产出与趋势"},
+    {"id": "guidance_group_ecology", "label": "指导环境与组内生态"}
+  ],
+  "communityConsented": true,
+  "communitySearchReady": true,
+  "advisors": [
+    {
+      "advisorProgramId": "example-cs-phd-prof-example",
+      "name": "Prof. Example",
+      "school": "Example University",
+      "program": "PhD in Computer Science",
+      "selectedSections": ["research_output_trend", "guidance_group_ecology"],
+      "sectionResults": {
+        "research_output_trend": "近三年持续发表相关论文",
+        "guidance_group_ecology": "检查后未找到可独立核验的严重负面信息"
+      },
+      "risksAndConflicts": ["匿名线索不足以形成结论"]
+    }
+  ],
+  "evidence": [
+    {
+      "advisorName": "Prof. Example",
+      "sectionLabel": "研究产出与趋势",
+      "finding": "近三年持续发表相关论文",
+      "evidenceStrength": "official",
+      "status": "verified",
+      "url": "https://example.edu/advisor",
+      "accessedAt": "2026-07-29"
+    }
+  ]
+}
