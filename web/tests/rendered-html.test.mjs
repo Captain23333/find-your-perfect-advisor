@@ -32,7 +32,9 @@ test("server-renders the advisor console", async () => {
   assert.match(html, /导师匹配进度/);
   assert.match(html, /优先候选导师/);
   assert.match(html, /本地项目 · 文件本地保存/);
-  assert.match(html, /选择引擎 · Phase 1 0\/2/);
+    assert.match(html, /Phase 1 0\/2/);
+    assert.match(html, /页面只展示前三名/);
+    assert.match(html, /生成最终排名与 Excel/);
   assert.match(html, /Phase 1 希望保留的导师数/);
   assert.match(html, /研究兴趣与权重/);
   assert.match(html, /可选/);

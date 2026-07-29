@@ -1585,6 +1585,11 @@ input[type="checkbox"] {
   min-height: calc(100vh - 150px);
 }
 
+.result-view:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+}
+
 .view-header {
   margin-bottom: 18px;
   display: flex;
@@ -1604,6 +1609,83 @@ input[type="checkbox"] {
   margin: 0;
   color: #8f8b95;
   font-size: 11px;
+}
+
+.view-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.phase-complete-chip {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  color: #267052;
+  background: var(--green-soft);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.phase-summary {
+  order: 1;
+  margin-bottom: 16px;
+  padding: 18px 20px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.phase-summary.complete {
+  border-color: #cfe6da;
+  background: linear-gradient(135deg, #f5fbf8, #fff);
+}
+
+.phase-summary-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--green);
+  font-weight: 900;
+}
+
+.phase-summary strong {
+  font-size: 14px;
+}
+
+.phase-summary p {
+  margin: 5px 0 0;
+  color: #65746c;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.phase-summary code {
+  max-width: 100%;
+  margin-top: 7px;
+  display: block;
+  overflow-wrap: anywhere;
+  color: #7b7781;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9px;
+}
+
+.text-button {
+  border: 0;
+  color: var(--violet-dark);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .honest-empty {
@@ -1656,7 +1738,12 @@ input[type="checkbox"] {
 
 .evidence-result-card,
 .ranking-result-card {
-  margin-top: 20px;
+  padding: 22px;
+}
+
+.evidence-result-card {
+  order: 2;
+  margin-bottom: 14px;
 }
 
 .result-card-heading {
@@ -1667,14 +1754,18 @@ input[type="checkbox"] {
 }
 
 .result-card-heading h2 {
-  margin: 5px 0 0;
+  margin: 6px 0 0;
+  font-size: 20px;
+  line-height: 1.25;
 }
 
 .result-card-heading > span {
   color: #6557d8;
   background: #f0edff;
   border-radius: 999px;
-  padding: 7px 11px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 750;
   white-space: nowrap;
 }
 
@@ -1684,7 +1775,7 @@ input[type="checkbox"] {
   margin-top: 20px;
 }
 
-.evidence-result-sections > div,
+.evidence-result-sections > section,
 .ranking-gaps {
   border: 1px solid #ebe8f3;
   border-radius: 14px;
@@ -1696,14 +1787,49 @@ input[type="checkbox"] {
 .ranking-rationale {
   margin: 7px 0;
   color: #555163;
+  font-size: 12px;
   line-height: 1.65;
 }
 
+.result-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.result-section-title strong {
+  font-size: 13px;
+}
+
+.result-section-title span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #267052;
+  background: var(--green-soft);
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.evidence-result-sections details {
+  margin-top: 10px;
+}
+
+.evidence-result-sections summary {
+  color: #756bbd;
+  font-size: 9px;
+  cursor: pointer;
+}
+
 .evidence-result-sections small {
+  margin-top: 7px;
+  display: block;
   color: #8a8495;
+  overflow-wrap: anywhere;
 }
 
 .ranking-results {
+  order: 2;
   display: grid;
   gap: 18px;
 }
@@ -1712,6 +1838,7 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 20px;
+  overflow: hidden;
 }
 
 .ranking-position {
@@ -1730,6 +1857,10 @@ input[type="checkbox"] {
   font-size: 28px;
 }
 
+.ranking-result-main {
+  min-width: 0;
+}
+
 .ranking-result-main .result-card-heading p {
   margin: 6px 0 0;
   color: #827d8c;
@@ -1744,6 +1875,23 @@ input[type="checkbox"] {
   padding-left: 20px;
   color: #6b6575;
   line-height: 1.55;
+}
+
+.ranking-footnote {
+  order: 3;
+  margin: 15px 0 0;
+  color: #898491;
+  font-size: 10px;
+  text-align: center;
+}
+
+.configuration-panel {
+  order: 3;
+  margin-top: 4px;
+}
+
+.honest-empty {
+  order: 4;
 }
 
 .toast {
@@ -2970,6 +3118,40 @@ input[type="checkbox"] {
     align-items: flex-start;
     gap: 16px;
     flex-direction: column;
+  }
+
+  .view-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .view-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .phase-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: flex-start;
+  }
+
+  .phase-summary > button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .ranking-result-card {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .ranking-position {
+    width: 42px;
+    height: 42px;
+  }
+
+  .result-card-heading {
+    gap: 12px;
   }
 
   .candidate-actions,

@@ -2,6 +2,9 @@
 
 `find-your-perfect-advisor` 的本地 Web 界面。当前版本包含：
 
+完整的页面流程、完成态判断、输出文件约定和维护清单见
+[前端使用与维护指引](../docs/FRONTEND_GUIDE.md)。
+
 - 多个申请项目的独立目录、状态和运行记录
 - Codex 订阅、Claude 订阅与自定义 Responses API 三种执行方式
 - CV 上传、递进式三阶段工作流、客观申请筛选、候选导师和背调状态
