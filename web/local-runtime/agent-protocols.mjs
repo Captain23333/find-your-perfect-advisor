@@ -100,6 +100,39 @@ export function claudePermissionResponse(permission, decision) {
 
 function codexPermissionFromRequest(message) {
   const params = message.params || {};
+  if (message.method === "execCommandApproval") {
+    return {
+      providerRequestId: String(message.id),
+      kind: "command",
+      toolName: "Shell",
+      title: "允许 Codex 执行这条本地命令？",
+      description: params.reason || null,
+      reason: params.reason || null,
+      command: Array.isArray(params.command)
+        ? params.command.join(" ")
+        : String(params.command || ""),
+      cwd: params.cwd || null,
+      path: null,
+      input: params,
+    };
+  }
+  if (message.method === "applyPatchApproval") {
+    const changedPaths = Object.keys(params.fileChanges || {});
+    return {
+      providerRequestId: String(message.id),
+      kind: "file",
+      toolName: "File change",
+      title: "允许 Codex 修改这些本地文件？",
+      description:
+        params.reason ||
+        (changedPaths.length ? `将修改：${changedPaths.join("、")}` : null),
+      reason: params.reason || null,
+      command: null,
+      cwd: null,
+      path: params.grantRoot || changedPaths[0] || null,
+      input: params,
+    };
+  }
   if (message.method === "item/commandExecution/requestApproval") {
     return {
       providerRequestId: String(message.id),
@@ -148,6 +181,16 @@ function codexPermissionFromRequest(message) {
 }
 
 function codexApprovalResult(method, params, decision) {
+  if (method === "execCommandApproval" || method === "applyPatchApproval") {
+    return {
+      decision:
+        decision === "deny"
+          ? { denied: { rejection: "用户在 Advisor Atlas 中拒绝了这项操作" } }
+          : decision === "allow_for_run"
+            ? "approved_for_session"
+            : "approved",
+    };
+  }
   if (method === "item/permissions/requestApproval") {
     return decision === "deny"
       ? { permissions: {}, scope: "turn" }
@@ -204,6 +247,10 @@ export function createCodexAppServerBridge({
 
   function respond(id, result) {
     send({ id, result });
+  }
+
+  function respondError(id, code, message) {
+    send({ id, error: { code, message } });
   }
 
   async function start() {
@@ -270,7 +317,18 @@ export function createCodexAppServerBridge({
       });
       return true;
     }
-    return false;
+    if (message.method === "currentTime/read") {
+      respond(message.id, { currentTimeAt: Math.floor(Date.now() / 1000) });
+      return true;
+    }
+
+    emit({
+      type: "run.protocol_warning",
+      source: "codex",
+      message: `Codex 请求了前端尚未支持的操作：${message.method}`,
+    });
+    respondError(message.id, -32601, `Advisor Atlas 不支持 Codex 请求：${message.method}`);
+    return true;
   }
 
   function handleNotification(message) {

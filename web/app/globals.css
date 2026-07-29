@@ -1654,6 +1654,98 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
+.evidence-result-card,
+.ranking-result-card {
+  margin-top: 20px;
+}
+
+.result-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.result-card-heading h2 {
+  margin: 5px 0 0;
+}
+
+.result-card-heading > span {
+  color: #6557d8;
+  background: #f0edff;
+  border-radius: 999px;
+  padding: 7px 11px;
+  white-space: nowrap;
+}
+
+.evidence-result-sections {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.evidence-result-sections > div,
+.ranking-gaps {
+  border: 1px solid #ebe8f3;
+  border-radius: 14px;
+  padding: 15px 17px;
+  background: #fbfafe;
+}
+
+.evidence-result-sections p,
+.ranking-rationale {
+  margin: 7px 0;
+  color: #555163;
+  line-height: 1.65;
+}
+
+.evidence-result-sections small {
+  color: #8a8495;
+}
+
+.ranking-results {
+  display: grid;
+  gap: 18px;
+}
+
+.ranking-result-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 20px;
+}
+
+.ranking-position {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  color: #6557d8;
+  background: #f0edff;
+  font-weight: 800;
+}
+
+.ranking-result-main .result-card-heading > strong {
+  color: #242130;
+  font-size: 28px;
+}
+
+.ranking-result-main .result-card-heading p {
+  margin: 6px 0 0;
+  color: #827d8c;
+}
+
+.ranking-gaps {
+  margin-top: 15px;
+}
+
+.ranking-gaps ul {
+  margin: 9px 0 0;
+  padding-left: 20px;
+  color: #6b6575;
+  line-height: 1.55;
+}
+
 .toast {
   position: fixed;
   right: 26px;
@@ -2298,6 +2390,23 @@ input[type="checkbox"] {
 .run-state.stopped {
   color: #a45c55;
   background: #fbeae8;
+}
+
+.run-stalled-warning {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 9px;
+  padding: 10px 12px;
+  border: 1px solid #e6c98f;
+  border-radius: 9px;
+  color: #745a2d;
+  background: #fff8e9;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.run-stalled-warning strong {
+  font-size: 9px;
 }
 
 .agent-log {

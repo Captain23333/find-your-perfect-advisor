@@ -24,7 +24,8 @@ import {
 const runtimeDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(runtimeDirectory, "../..");
 const dataRoot = resolve(projectRoot, ".advisor-atlas");
-const host = "127.0.0.1";
+const host = process.env.ADVISOR_ATLAS_RUNTIME_HOST || "127.0.0.1";
+const hostForUrl = host.includes(":") ? `[${host}]` : host;
 const port = Number(process.env.ADVISOR_ATLAS_RUNTIME_PORT || 4318);
 const activeRuns = new Map();
 const projectStore = createProjectStore(projectRoot);
@@ -42,7 +43,12 @@ function corsHeaders(origin) {
   let allowedOrigin = "http://localhost:3000";
   try {
     const parsed = new URL(origin || allowedOrigin);
-    if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+    if (
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "[::1]" ||
+      parsed.hostname === "::1"
+    ) {
       allowedOrigin = origin || allowedOrigin;
     }
   } catch {
@@ -318,7 +324,9 @@ function normalizeEvent(provider, line, stream) {
 
   let message = "";
   if (provider !== "claude") {
-    if (parsed.type === "thread.started") {
+    if (parsed.fields?.message) {
+      message = parsed.fields.message;
+    } else if (parsed.type === "thread.started") {
       message = `Codex 会话已创建：${parsed.thread_id || ""}`;
     } else if (parsed.type === "turn.started") {
       message = "Codex 已开始处理任务";
@@ -568,10 +576,13 @@ async function startRun(request, response, origin) {
 8. 本次项目保存的调查配置为：${JSON.stringify(project.investigation || {}, null, 2)}
    必须使用其中精确的 selectedAdvisorProgramIds 和 selectedSections，不能只按人数或 Top N 猜测。
 9. Web 社区资料缓存目录为：${resolve(project.path, "community-cache")}。只有 communitySources.consented 为 true 且相关维度被选中时才可读取；searchReady 不为 true 时必须写“未完成检索”。
-10. Phase 1 目标 shortlist 数量为 ${project.shortlistTarget}。先建立约 ${Math.min(
+10. Phase 1 目标 shortlist 数量为 ${project.shortlistTarget}。发现池大小必须服从用户范围：如果是一个明确学校、院系、研究所或实验室，覆盖其官方名册中合理相关且具备指导资格的人，不得为了凑数硬扩到 30，通常以约 ${Math.min(
     60,
-    Math.max(30, project.shortlistTarget * 3),
-  )} 位候选的发现池，再按研究匹配与客观条件筛到目标数量；不得把 Phase 2 的社区风评、组内生态或全面社交调查提前到 Phase 1。
+    project.shortlistTarget * 2,
+  )} 位相关候选为目标；只有跨校或地区级宽范围搜索才以约 ${Math.min(
+    60,
+    project.shortlistTarget * 3,
+  )} 位为目标。再按研究匹配与客观条件筛到目标数量；不得把 Phase 2 的社区风评、组内生态或全面社交调查提前到 Phase 1。
 11. 不要执行 git commit、git push、发布、发送邮件或任何对外提交操作。`;
 
   const command =
@@ -847,7 +858,7 @@ async function startRun(request, response, origin) {
 
 const server = createServer(async (request, response) => {
   const origin = request.headers.origin;
-  const requestUrl = new URL(request.url || "/", `http://${host}:${port}`);
+  const requestUrl = new URL(request.url || "/", `http://${hostForUrl}:${port}`);
 
   if (request.method === "OPTIONS") {
     response.writeHead(204, corsHeaders(origin));
@@ -1072,7 +1083,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Advisor Atlas runtime: http://${host}:${port}`);
+  console.log(`Advisor Atlas runtime: http://${hostForUrl}:${port}`);
   console.log(`Project root: ${projectRoot}`);
 });
 

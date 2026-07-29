@@ -62,7 +62,16 @@ Structured JSON is the source of truth.
 
 ### 2. Broad discovery
 
-Build a roster of roughly `max(30, shortlist_target * 3)`, capped at 60, using official faculty pages,
+Size the roster to the user's actual scope:
+
+- For one explicitly named school, department, institute, or lab, cover the
+  complete plausible official roster without padding it to an arbitrary
+  minimum. Aim for roughly `shortlist_target * 2` when that many relevant,
+  currently eligible advisors exist.
+- For broad multi-school or regional searches, aim for roughly
+  `shortlist_target * 3`, capped at 60.
+
+Use official faculty pages,
 targeted search, Scholar, dblp, OpenReview, or field directories. Record only:
 
 - Name, institution, department, current role, homepage, and stable `advisor_id`.

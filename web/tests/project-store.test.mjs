@@ -56,6 +56,46 @@ test("project store persists exact investigation configuration", async () => {
     assert.equal(updated.readiness.phase1Ready, true);
     assert.equal(updated.readiness.objectiveReady, false);
 
+    await writeFile(
+      resolve(project.path, "outputs", "detective-results.json"),
+      JSON.stringify({
+        selectedSections: ["recent_research"],
+        results: [
+          {
+            advisorProgramId: "advisor-program-1",
+            name: "Test Advisor",
+            sections: {
+              recent_research: {
+                summary: "Verified recent work",
+                sourceIds: ["source-1"],
+              },
+            },
+            evidenceCount: 1,
+          },
+        ],
+        evidenceCount: 1,
+        evidenceCoverage: 100,
+      }),
+    );
+    await writeFile(
+      resolve(project.path, "outputs", "ranking.json"),
+      JSON.stringify({
+        rankings: [
+          {
+            advisorProgramId: "advisor-program-1",
+            rank: 1,
+            name: "Test Advisor",
+            totalScore: 8.5,
+            evidenceGaps: ["Recruiting status"],
+          },
+        ],
+      }),
+    );
+    const withResults = await store.getProject("test-project");
+    assert.equal(withResults.detectiveResults.results[0].name, "Test Advisor");
+    assert.equal(withResults.rankings[0].totalScore, 8.5);
+    assert.deepEqual(withResults.rankings[0].evidenceGaps, ["Recruiting status"]);
+
     await assert.rejects(
       readFile(
         resolve(

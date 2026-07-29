@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type Provider = "Claude Code" | "Codex" | "Custom API";
 type View = "overview" | "candidates" | "evidence" | "ranking";
+type RunnerMode = "finder" | "detective" | "ranking";
 type RunState =
   | "idle"
   | "starting"
@@ -75,6 +76,8 @@ type AdvisorProject = {
   path: string;
   status: ProjectStatus;
   candidates: AdvisorCandidate[];
+  detectiveResults: DetectiveResults | null;
+  rankings: AdvisorRanking[];
   investigation: {
     selectedAdvisorProgramIds: string[];
     selectedSections: string[];
@@ -92,6 +95,38 @@ type AdvisorProject = {
     uploadedAt: string;
   } | null;
   readiness: ProjectReadiness;
+};
+
+type DetectiveSectionResult =
+  | string
+  | {
+      status?: string;
+      summary?: string;
+      sourceIds?: string[];
+    };
+
+type DetectiveResults = {
+  selectedSections: string[];
+  results: Array<{
+    advisorProgramId: string;
+    name: string;
+    sections: Record<string, DetectiveSectionResult>;
+    evidenceCount: number;
+  }>;
+  evidenceCount: number;
+  evidenceCoverage: number;
+  generatedAt: string | null;
+};
+
+type AdvisorRanking = {
+  advisorProgramId: string;
+  rank: number;
+  name: string;
+  school?: string;
+  program?: string;
+  totalScore: number;
+  rationale?: string;
+  evidenceGaps: string[];
 };
 
 type AdvisorCandidate = {
@@ -139,7 +174,7 @@ type PermissionRequest = {
   requestedAt: string;
 };
 
-const runtimeUrl = "http://127.0.0.1:4318";
+const runtimeUrl = "/api/runtime";
 const providerKey: Record<Provider, keyof RuntimeHealth["providers"]> = {
   Codex: "codex",
   "Claude Code": "claude",
@@ -222,12 +257,15 @@ export default function Home() {
   const [intakeSaving, setIntakeSaving] = useState(false);
   const [intakeDirty, setIntakeDirty] = useState(false);
   const [runnerOpen, setRunnerOpen] = useState(false);
+  const [runnerMode, setRunnerMode] = useState<RunnerMode>("finder");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [taskPrompt, setTaskPrompt] = useState(defaultTask);
   const [runState, setRunState] = useState<RunState>("idle");
   const [runId, setRunId] = useState("");
   const [runOutputDirectory, setRunOutputDirectory] = useState("");
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
+  const [lastRunActivityAt, setLastRunActivityAt] = useState(0);
+  const [runStalled, setRunStalled] = useState(false);
   const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
   const [resolvingPermissionId, setResolvingPermissionId] = useState("");
   const [customForm, setCustomForm] = useState({
@@ -329,11 +367,26 @@ export default function Home() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [runEvents]);
 
+  useEffect(() => {
+    if (!["starting", "running", "waiting_permission"].includes(runState)) {
+      setRunStalled(false);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setRunStalled(
+        lastRunActivityAt > 0 && Date.now() - lastRunActivityAt > 90_000,
+      );
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [lastRunActivityAt, runState]);
+
   const activeProject = projects.find((item) => item.id === activeProjectId) || null;
   const candidates = useMemo(
     () => activeProject?.candidates || [],
     [activeProject?.candidates],
   );
+  const detectiveResults = activeProject?.detectiveResults || null;
+  const rankings = activeProject?.rankings || [];
   const projectStatus: ProjectStatus = activeProject?.status || {
     schemaVersion: 2,
     phase: "intake",
@@ -347,6 +400,11 @@ export default function Home() {
     rankingCount: 0,
     updatedAt: null,
   };
+  const detectiveEvidenceCount = ["detective", "evaluator", "completed"].includes(
+    projectStatus.phase,
+  )
+    ? projectStatus.evidenceCount
+    : 0;
   const projectReadiness: ProjectReadiness = activeProject?.readiness || {
     ready: false,
     phase1Ready: false,
@@ -375,6 +433,17 @@ export default function Home() {
     !applicationDraft.target.trim() ? "填写目标院校或地区范围" : "",
     !filePath && !hasDraftInterests ? "上传 CV 或填写至少一个研究兴趣" : "",
   ].filter(Boolean);
+  const draftPhaseOneReady = draftMissing.length === 0;
+  const draftObjectiveMissing = [
+    !applicationDraft.degree.trim() ? "填写目标学位" : "",
+    !applicationDraft.season.trim() ? "填写申请季" : "",
+  ].filter(Boolean);
+  const displayedPhaseOneReady = intakeDirty
+    ? draftPhaseOneReady
+    : projectReadiness.phase1Ready;
+  const displayedObjectiveReady = intakeDirty
+    ? draftObjectiveMissing.length === 0
+    : projectReadiness.objectiveReady;
   const activePermission = pendingPermissions[0] || null;
   const activePermissionDetail = activePermission
     ? activePermission.command ||
@@ -382,6 +451,55 @@ export default function Home() {
       activePermission.reason ||
       JSON.stringify(activePermission.input, null, 2)
     : "";
+  const selectedSectionLabels = detectiveSectionOptions
+    .filter((option) => selectedSections.has(option.id))
+    .map((option) => option.label);
+  const runnerContent =
+    runnerMode === "detective"
+      ? {
+          kicker: "BACKGROUND CHECK",
+          title: "开始导师背调",
+          description: "按你勾选的维度调查已选导师，并保留可追溯证据。",
+          runningLabel: "正在背调",
+          startLabel: "开始背调",
+          completionHint: "完成后会自动更新背调证据页面。",
+          summary: [
+            `只调查已选择的 ${selected.size} 位导师—项目组合`,
+            `调查 ${selectedSectionLabels.length} 个维度：${selectedSectionLabels.join("、")}`,
+            communityConsent
+              ? "导师风评相关维度可使用已授权的本地社区资料"
+              : "未授权社区资料；不会下载或读取本地红黑榜",
+          ],
+        }
+      : runnerMode === "ranking"
+        ? {
+            kicker: "FINAL DECISION",
+            title: "生成综合排名",
+            description: "复用现有候选与背调证据，生成透明的最终排序。",
+            runningLabel: "正在排名",
+            startLabel: "生成排名",
+            completionHint: "完成后会自动更新最终排名页面。",
+            summary: [
+              "复用当前项目已有候选与证据，不重新执行导师发现",
+              "保留研究匹配、申请可行性、风险和证据缺口",
+              "输出评分依据与来源，缺失信息不使用推测补齐",
+            ],
+          }
+        : {
+            kicker: "START MATCHING",
+            title: "开始寻找导师",
+            description: "根据当前项目资料执行低成本导师发现和客观筛选。",
+            runningLabel: "正在寻找导师",
+            startLabel: "开始寻找导师",
+            completionHint: "完成后会自动更新候选导师页面。",
+            summary: [
+              "读取当前项目的 CV / 研究兴趣与目标范围",
+              `建立与范围相称的发现池并筛选到 Top ${
+                activeProject?.shortlistTarget || 10
+              }`,
+              "只补齐 shortlist 的客观申请条件，避免重复搜索",
+            ],
+          };
 
   useEffect(() => {
     if (!activeProject) return;
@@ -437,7 +555,7 @@ export default function Home() {
       detail: "解析 CV、构建院系名册、完成研究方向匹配",
       meta:
         projectStatus.candidateCount > 0
-          ? `已找到 ${projectStatus.candidateCount} 位真实候选`
+          ? `发现池 ${projectStatus.candidateCount} 位，已筛出 ${candidates.length} 位`
           : projectReadiness.phase1Ready
             ? "资料已齐全，可以启动"
             : `Phase 1 准备 ${projectReadiness.completed}/${projectReadiness.total}`,
@@ -453,8 +571,8 @@ export default function Home() {
       title: "深度背景调查",
       detail: "论文主线、主页项目、社交动态与学生评价",
       meta:
-        projectStatus.evidenceCount > 0
-          ? `已记录 ${projectStatus.evidenceCount} 条证据`
+        detectiveEvidenceCount > 0
+          ? `已记录 ${detectiveEvidenceCount} 条背调证据`
           : projectStatus.candidateCount > 0
             ? "等待选择调查对象"
             : "等待导师搜索",
@@ -577,10 +695,40 @@ export default function Home() {
     return runtimeHealth?.providers[providerKey[provider]] ?? null;
   }
 
-  function openRunner(prompt?: string) {
+  function openRunner(prompt?: string, mode: RunnerMode = "finder") {
     if (prompt) setTaskPrompt(prompt);
+    setRunnerMode(mode);
     setAdvancedOpen(false);
+    setRunState("idle");
+    setRunId("");
+    runIdRef.current = "";
+    setRunOutputDirectory("");
+    setRunEvents([]);
+    setPendingPermissions([]);
+    setResolvingPermissionId("");
+    setLastRunActivityAt(0);
+    setRunStalled(false);
     setRunnerOpen(true);
+  }
+
+  function buildPhaseOnePrompt() {
+    const project = activeProject;
+    const interests = project?.interests?.length
+      ? project.interests
+          .map((interest) => `${interest.name} ${interest.weight}%`)
+          .join("，")
+      : "未提供；请以 CV 为主要匹配信号";
+
+    return `${defaultTask}
+
+当前已保存的 Phase 1 输入：
+- CV：${project?.cv?.path || filePath || "未上传"}
+- 申请目标：${project?.target || "未填写"}
+- 目标学位与申请季：${project?.degree || "未填写"} · ${project?.season || "未填写"}
+- 研究兴趣权重：${interests}
+- shortlist：Top ${project?.shortlistTarget || 10}
+
+仅调查目标范围内的导师。Phase 1 不检索社区风评或其他 Phase 2 信息；优先复用同一官方页面中的项目与申请条件，避免重复搜索。`;
   }
 
   function firstUsableProvider(): Provider | null {
@@ -696,7 +844,7 @@ export default function Home() {
       focusApplicationInput();
       return;
     }
-    openRunner(defaultTask);
+    openRunner(buildPhaseOnePrompt());
   }
 
   async function uploadCv(file: File | undefined) {
@@ -722,15 +870,6 @@ export default function Home() {
       setFilePath(payload.path);
       setUploadState("ready");
       await refreshProjects(activeProjectId);
-      setTaskPrompt(
-        `${defaultTask}\n\n本次真实 CV 文件路径：${payload.path}\n申请目标：${activeProject?.target || "待确认"}\n目标学位：${activeProject?.degree || "待确认"} · ${activeProject?.season || "待确认"}\n研究兴趣权重：${
-          activeProject?.interests?.length
-            ? activeProject.interests
-                .map((interest) => `${interest.name} ${interest.weight}%`)
-                .join("，")
-            : "待确认"
-        }。`,
-      );
       showNotice("CV 已保存到当前申请项目");
     } catch (error) {
       setUploadState("failed");
@@ -749,6 +888,8 @@ export default function Home() {
 
     setRunState("starting");
     setRunEvents([]);
+    setLastRunActivityAt(Date.now());
+    setRunStalled(false);
     setRunId("");
     runIdRef.current = "";
     setRunOutputDirectory("");
@@ -794,6 +935,8 @@ export default function Home() {
         for (const line of lines) {
           if (!line.trim()) continue;
           const event = JSON.parse(line) as RunEvent;
+          setLastRunActivityAt(Date.now());
+          setRunStalled(false);
           if (event.runId) {
             runIdRef.current = event.runId;
             setRunId(event.runId);
@@ -837,8 +980,16 @@ export default function Home() {
             setRunState((event.status as RunState) || "completed");
             await refreshProjects(activeProjectId);
             if (event.status === "completed") {
-              setView("candidates");
-              showNotice("导师搜索已完成，候选名单已更新");
+              if (runnerMode === "detective") {
+                setView("evidence");
+                showNotice("导师背调已完成，证据与风险信息已更新");
+              } else if (runnerMode === "ranking") {
+                setView("ranking");
+                showNotice("综合排名已生成");
+              } else {
+                setView("candidates");
+                showNotice("导师搜索已完成，候选名单已更新");
+              }
             }
           }
         }
@@ -1002,7 +1153,7 @@ export default function Home() {
 精确 advisor-program IDs：${JSON.stringify([...selected])}
 精确 selected_sections：${JSON.stringify([...selectedSections])}
 社区资料本地下载授权：${communityConsent ? "已授权" : "未授权"}。
-不得改用 Top N 或只按人数猜测对象；未选择的维度写“用户未选择复核”。`);
+不得改用 Top N 或只按人数猜测对象；未选择的维度写“用户未选择复核”。`, "detective");
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "背调配置保存失败");
     } finally {
@@ -1011,13 +1162,13 @@ export default function Home() {
   }
 
   function startRanking() {
-    if (projectStatus.evidenceCount === 0) {
+    if (detectiveEvidenceCount === 0) {
       showNotice("请先完成候选导师背调");
       return;
     }
     openRunner(`请完整读取 skills/advisor-evaluator/SKILL.md，使用当前项目已有的真实候选导师和背调证据生成最终排名。
 
-必须保留评分依据、权重、风险提示和证据来源。缺少必要证据时明确指出，不得用推测补齐。`);
+必须保留评分依据、权重、风险提示和证据来源。缺少必要证据时明确指出，不得用推测补齐。`, "ranking");
   }
 
   async function connectCustomApi() {
@@ -1143,14 +1294,14 @@ export default function Home() {
             onClick={() => openProjectView("candidates")}
           >
             <span className="nav-icon">◎</span> 候选导师
-            <em>{projectStatus.candidateCount}</em>
+            <em>{candidates.length}</em>
           </button>
           <button
             className={view === "evidence" ? "active" : ""}
             onClick={() => openProjectView("evidence")}
           >
             <span className="nav-icon">◫</span> 背调证据
-            <em>{projectStatus.evidenceCount}</em>
+            <em>{detectiveEvidenceCount}</em>
           </button>
           <button
             className={view === "ranking" ? "active" : ""}
@@ -1209,7 +1360,11 @@ export default function Home() {
           <div className="top-actions">
             <button
               className="agent-button"
-              onClick={() => openRunner()}
+              onClick={() =>
+                projectStatus.candidateCount === 0 && projectReadiness.phase1Ready
+                  ? startPhaseOne()
+                  : openRunner()
+              }
             >
               <span className={runtimeHealth ? "runtime-online" : "runtime-offline"} />
               {projectReadiness.phase1Ready
@@ -1247,7 +1402,11 @@ export default function Home() {
               <span>当前引擎</span>
               <button
                 className="provider-pill"
-                onClick={() => openRunner()}
+                onClick={() =>
+                  projectStatus.candidateCount === 0 && projectReadiness.phase1Ready
+                    ? startPhaseOne()
+                    : openRunner()
+                }
               >
                 <i
                   className={
@@ -1264,7 +1423,7 @@ export default function Home() {
           <section className="stats-grid" hidden={view !== "overview"}>
             <article className="stat-card primary-stat">
               <div className="stat-top">
-                <span>候选导师</span>
+                <span>Phase 1 发现池</span>
                 <i>本轮</i>
               </div>
               <div className="stat-value">
@@ -1272,7 +1431,7 @@ export default function Home() {
               </div>
               <div className="stat-foot">
                 <span>
-                  {projectStatus.candidateCount > 0 ? "真实候选结果" : "尚未开始导师搜索"}
+                  {projectStatus.candidateCount > 0 ? "低成本初筛名册" : "尚未开始导师搜索"}
                 </span>
                 {projectStatus.candidateCount > 0 && <Sparkline />}
               </div>
@@ -1605,19 +1764,25 @@ export default function Home() {
                       ? "更新申请资料"
                       : "保存申请资料"}
                 </button>
-                <div className={`intake-status ${projectReadiness.phase1Ready ? "complete" : ""}`}>
-                  <span>{projectReadiness.phase1Ready ? "✓" : "!"}</span>
+                <div className={`intake-status ${displayedPhaseOneReady ? "complete" : ""}`}>
+                  <span>{displayedPhaseOneReady ? "✓" : "!"}</span>
                   <p>
                     <strong>
-                      {projectReadiness.phase1Ready
-                        ? "Phase 1 已解锁，可以开始发现导师"
+                      {displayedPhaseOneReady
+                        ? intakeDirty
+                          ? "输入已齐全，保存后即可开始发现导师"
+                          : "Phase 1 已解锁，可以开始发现导师"
                         : "还需补齐 Phase 1 的最低输入"}
                     </strong>
                     <small>
-                      {projectReadiness.phase1Ready
-                        ? projectReadiness.objectiveReady
+                      {displayedPhaseOneReady
+                        ? displayedObjectiveReady
                           ? "客观申请条件筛选所需信息也已齐全"
-                          : `可以先进行发现与匹配；客观筛选前还需：${projectReadiness.objectiveMissing.join("、")}`
+                          : `可以先进行发现与匹配；客观筛选前还需：${
+                              intakeDirty
+                                ? draftObjectiveMissing.join("、")
+                                : projectReadiness.objectiveMissing.join("、")
+                            }`
                         : `还需：${draftMissing.join("、")}`}
                     </small>
                   </p>
@@ -1769,9 +1934,9 @@ export default function Home() {
                 <button
                   className="primary-button"
                   disabled={selected.size === 0}
-                  onClick={startInvestigation}
+                  onClick={() => openProjectView("evidence")}
                 >
-                  开始深度背调 <span>→</span>
+                  配置深度背调 <span>→</span>
                 </button>
               </div>
             </div>
@@ -1890,7 +2055,7 @@ export default function Home() {
               </article>
             </div>
             <article className="panel honest-empty compact-empty">
-              <span>{projectStatus.evidenceCount || "00"}</span>
+              <span>{detectiveEvidenceCount || "00"}</span>
               <h2>
                 {projectStatus.candidateCount === 0
                   ? "先获得候选导师"
@@ -1915,6 +2080,42 @@ export default function Home() {
                 {projectStatus.candidateCount === 0 ? "开始寻找导师" : "前往选择导师"}
               </button>
             </article>
+            {detectiveResults?.results.map((result) => (
+              <article className="panel evidence-result-card" key={result.advisorProgramId}>
+                <div className="result-card-heading">
+                  <div>
+                    <span className="section-kicker">INVESTIGATION RESULT</span>
+                    <h2>{result.name}</h2>
+                  </div>
+                  <span>{result.evidenceCount} 条证据</span>
+                </div>
+                <div className="evidence-result-sections">
+                  {detectiveResults.selectedSections.map((sectionId) => {
+                    const option = detectiveSectionOptions.find(
+                      (item) => item.id === sectionId,
+                    );
+                    const section = result.sections?.[sectionId];
+                    const summary =
+                      typeof section === "string"
+                        ? section
+                        : section?.summary || "本轮没有生成可展示的结论";
+                    const sources =
+                      typeof section === "object" && Array.isArray(section?.sourceIds)
+                        ? section.sourceIds
+                        : [];
+                    return (
+                      <div key={sectionId}>
+                        <strong>{option?.label || sectionId}</strong>
+                        <p>{summary}</p>
+                        {sources.length > 0 && (
+                          <small>证据索引：{sources.join("、")}</small>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </article>
+            ))}
           </section>
 
           <section className="result-view" hidden={view !== "ranking"}>
@@ -1926,51 +2127,86 @@ export default function Home() {
               </div>
               <button
                 className="primary-button"
-                disabled={projectStatus.evidenceCount === 0}
+                disabled={detectiveEvidenceCount === 0}
                 onClick={startRanking}
               >
                 生成最终排名
               </button>
             </header>
-            <article className="panel honest-empty">
-              <span>{projectStatus.rankingCount || "00"}</span>
-              <h2>
-                {projectStatus.evidenceCount === 0
-                  ? "还没有足够的背调证据"
-                  : "等待生成最终排名"}
-              </h2>
-              <p>
-                {projectStatus.evidenceCount === 0
-                  ? "先完成候选导师背调，系统才能给出有依据的综合判断。"
-                  : "证据准备完成后，可以进入综合评分与决策阶段。"}
-              </p>
-              <button
-                onClick={() =>
-                  openProjectView(
-                    projectStatus.candidateCount === 0 ? "candidates" : "evidence",
-                  )
-                }
-              >
-                {projectStatus.candidateCount === 0 ? "前往候选导师" : "查看背调证据"}
-              </button>
-            </article>
+            {rankings.length > 0 ? (
+              <div className="ranking-results">
+                {rankings.map((item) => (
+                  <article className="panel ranking-result-card" key={item.advisorProgramId}>
+                    <div className="ranking-position">#{item.rank}</div>
+                    <div className="ranking-result-main">
+                      <div className="result-card-heading">
+                        <div>
+                          <h2>{item.name}</h2>
+                          <p>{[item.school, item.program].filter(Boolean).join(" · ")}</p>
+                        </div>
+                        <strong>{item.totalScore.toFixed(1)}</strong>
+                      </div>
+                      {item.rationale && <p className="ranking-rationale">{item.rationale}</p>}
+                      {item.evidenceGaps.length > 0 && (
+                        <div className="ranking-gaps">
+                          <strong>仍需确认</strong>
+                          <ul>
+                            {item.evidenceGaps.map((gap) => (
+                              <li key={gap}>{gap}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <article className="panel honest-empty">
+                <span>{projectStatus.rankingCount || "00"}</span>
+                <h2>
+                  {detectiveEvidenceCount === 0
+                    ? "还没有足够的背调证据"
+                    : "等待生成最终排名"}
+                </h2>
+                <p>
+                  {detectiveEvidenceCount === 0
+                    ? "先完成候选导师背调，系统才能给出有依据的综合判断。"
+                    : "证据准备完成后，可以进入综合评分与决策阶段。"}
+                </p>
+                <button
+                  onClick={() =>
+                    openProjectView(
+                      projectStatus.candidateCount === 0 ? "candidates" : "evidence",
+                    )
+                  }
+                >
+                  {projectStatus.candidateCount === 0 ? "前往候选导师" : "查看背调证据"}
+                </button>
+              </article>
+            )}
           </section>
         </div>
       </section>
 
       {runnerOpen && (
-        <div className="runner-layer" role="dialog" aria-modal="true" aria-label="开始寻找导师">
+        <div
+          className="runner-layer"
+          role="dialog"
+          aria-modal="true"
+          aria-label={runnerContent.title}
+        >
           <button
             className="runner-backdrop"
-            aria-label="关闭寻找导师面板"
+            aria-label={`关闭${runnerContent.title}面板`}
             onClick={closeRunner}
           />
           <aside className="runner-drawer">
             <header className="runner-header">
               <div>
-                <span className="section-kicker">START MATCHING</span>
-                <h2>开始寻找导师</h2>
-                <p>选择你要使用的模型，系统会根据当前项目资料执行导师搜索。</p>
+                <span className="section-kicker">{runnerContent.kicker}</span>
+                <h2>{runnerContent.title}</h2>
+                <p>{runnerContent.description}</p>
               </div>
               <button className="runner-close" onClick={closeRunner} aria-label="关闭">
                 ×
@@ -2152,12 +2388,14 @@ export default function Home() {
             <section className="runner-section prompt-section">
               <div className="runner-section-title">
                 <strong>本次会做什么</strong>
-                {filePath && <span className="attached-file">CV 已准备</span>}
+                {runnerMode === "finder" && filePath && (
+                  <span className="attached-file">CV 已准备</span>
+                )}
               </div>
               <ul className="run-summary-list">
-                <li>读取当前项目的 CV / 研究兴趣与目标范围</li>
-                <li>建立发现池并筛选到 Top {activeProject?.shortlistTarget || 10}</li>
-                <li>只补齐 shortlist 的客观申请条件，避免重复搜索</li>
+                {runnerContent.summary.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
               </ul>
               <button
                 className="advanced-toggle"
@@ -2289,12 +2527,20 @@ export default function Home() {
                               : "运行失败"}
                 </span>
               </div>
+              {runStalled && (
+                <div className="run-stalled-warning">
+                  <strong>超过 90 秒没有收到新进度</strong>
+                  <span>
+                    模型可能正在重连或某个操作未返回。可以继续等待，也可以停止后缩小任务范围重试。
+                  </span>
+                </div>
+              )}
               <div className={`agent-log ${runEvents.length ? "" : "empty"}`}>
                 {runEvents.length === 0 ? (
                   <div>
                     <span>›_</span>
                     <strong>开始后，进度会实时显示在这里</strong>
-                    <small>完成后会自动更新候选导师页面。</small>
+                    <small>{runnerContent.completionHint}</small>
                   </div>
                 ) : (
                   runEvents.map((event, index) => (
@@ -2341,8 +2587,8 @@ export default function Home() {
                   {runState === "waiting_permission"
                     ? "等待你的授权"
                     : runState === "running" || runState === "starting"
-                      ? "正在寻找导师"
-                    : "开始寻找导师"}
+                      ? runnerContent.runningLabel
+                    : runnerContent.startLabel}
                   <span>→</span>
                 </button>
               </div>

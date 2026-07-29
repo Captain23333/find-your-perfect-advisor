@@ -113,4 +113,30 @@ test("Codex app-server bridge initializes and returns structured approval decisi
 
   const approval = sent.find((message) => message.id === 77);
   assert.deepEqual(approval.result, { decision: "acceptForSession" });
+
+  bridge.handleLine(
+    JSON.stringify({
+      id: 78,
+      method: "applyPatchApproval",
+      params: {
+        conversationId: "thread-1",
+        callId: "patch-1",
+        fileChanges: {
+          "/tmp/advisor-project/outputs/candidates.json": {
+            type: "update",
+            unified_diff: "@@",
+            move_path: null,
+          },
+        },
+        reason: "Write the verified shortlist",
+        grantRoot: "/tmp/advisor-project",
+      },
+    }),
+  );
+  assert.equal(permissionRequest.kind, "file");
+  assert.equal(permissionRequest.path, "/tmp/advisor-project");
+  permissionResponder("allow_once");
+
+  const patchApproval = sent.find((message) => message.id === 78);
+  assert.deepEqual(patchApproval.result, { decision: "approved" });
 });

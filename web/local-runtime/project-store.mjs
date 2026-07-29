@@ -125,6 +125,50 @@ export function createProjectStore(projectRoot) {
     }
   }
 
+  async function readDetectiveResults(target) {
+    try {
+      const parsed = JSON.parse(
+        await readFile(resolve(target, "outputs", "detective-results.json"), "utf8"),
+      );
+      return {
+        selectedSections: Array.isArray(parsed?.selectedSections)
+          ? parsed.selectedSections.map(String)
+          : [],
+        results: Array.isArray(parsed?.results) ? parsed.results : [],
+        evidenceCount: Number(parsed?.evidenceCount || 0),
+        evidenceCoverage: Number(parsed?.evidenceCoverage || 0),
+        generatedAt: parsed?.generatedAt || null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function readRankings(target) {
+    try {
+      const parsed = JSON.parse(
+        await readFile(resolve(target, "outputs", "ranking.json"), "utf8"),
+      );
+      const rankings = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.rankings)
+          ? parsed.rankings
+          : Array.isArray(parsed?.ranking)
+            ? parsed.ranking
+            : [];
+      return rankings.map((item, index) => ({
+        ...item,
+        rank: Number(item?.rank || index + 1),
+        totalScore: Number(item?.totalScore ?? item?.score ?? 0),
+        evidenceGaps: Array.isArray(item?.evidenceGaps)
+          ? item.evidenceGaps.map(String)
+          : [],
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   function normalizeInterests(input) {
     if (!Array.isArray(input)) return [];
     const interests = input
@@ -283,6 +327,8 @@ export function createProjectStore(projectRoot) {
       path: target,
       status: await readStatus(target),
       candidates: await readCandidates(target),
+      detectiveResults: await readDetectiveResults(target),
+      rankings: await readRankings(target),
       readiness: projectReadiness(metadata),
     };
   }
