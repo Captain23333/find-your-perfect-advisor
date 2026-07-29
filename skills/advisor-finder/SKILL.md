@@ -17,16 +17,20 @@ field-level source record already supports the needed fact.
 
 ## Inputs
 
-Require:
+Require to start Phase 1:
 
-- CV or candidate profile.
-- Target degree and intake.
 - Target schools, regions, departments, or ranking scope.
-- Research interests and weights.
+- Either a real CV/candidate profile or at least one research interest.
+
+Target degree and intake may be added after discovery, but require them before
+the objective application-feasibility pass. Research-interest weights are
+optional. If interests exist without weights, use equal weights; if partial
+weights are supplied, normalize them transparently.
 
 Accept optional hard constraints such as full funding, maximum tuition, ranking
-cutoff, location, or excluded institutions. Normalize research weights to 1.0
-and preserve hard constraints separately.
+cutoff, location, or excluded institutions. Accept a user-selected
+`shortlist_target` from 5 to 50, defaulting to 10. Preserve hard constraints
+separately.
 
 If the complete Advisor Atlas skill set is present, read
 `../advisor-pipeline/references/data-contract.md`. Read
@@ -49,25 +53,26 @@ Structured JSON is the source of truth.
 ### 1. Intake and normalize
 
 1. Parse education, skills, publications, projects, awards, and research
-   interests from the real CV.
-2. Confirm degree, intake, target scope, and hard constraints.
-3. Record the user-selected Finder sections. Default to:
-   `identity_current_role`, `recent_research`, and
-   `current_projects_recruiting`.
-4. If the user deselects a default, warn that the shortlist may be incomplete or
-   stale; record the choice rather than silently re-enabling it.
+   interests from the real CV when provided.
+2. Combine CV-derived signals with any user-entered research interests. Do not
+   require the user to repeat interests already clear from the CV.
+3. Confirm the target scope and `shortlist_target`.
+4. Record degree, intake, and hard constraints when present. If degree or intake
+   is missing, discovery may continue but the objective screen must pause.
 
 ### 2. Broad discovery
 
-Build a roster of roughly 30–60 candidates using official faculty pages,
+Build a roster of roughly `max(30, shortlist_target * 3)`, capped at 60, using official faculty pages,
 targeted search, Scholar, dblp, OpenReview, or field directories. Record only:
 
-- Name, institution, department, homepage, and stable `advisor_id`.
-- Initial relevance note.
+- Name, institution, department, current role, homepage, and stable `advisor_id`.
+- High-level recent research, two or three representative recent works, initial
+  relevance, and an official recruiting signal when readily available.
 - Facts encountered incidentally, with sources.
 
-Do not perform full application research or deep social investigation at this
-stage.
+These are fixed low-cost Finder facts, not user-selectable Detective sections.
+Do not perform full application research, community-opinion research, group
+ecology research, or broad social investigation at this stage.
 
 ### 3. Research profile and fit
 
@@ -77,7 +82,8 @@ Use current personal/lab pages plus recent publication records. A stale homepage
 does not imply an inactive researcher; use Scholar, dblp, publication pages, or
 OpenReview for recent work.
 
-For each selected research interest, score 0–10 with short supporting evidence:
+For each selected or CV-derived research interest, score 0–10 with short
+supporting evidence:
 
 - 9–10: current core focus with strong recent evidence.
 - 6–8: active secondary direction.
@@ -85,12 +91,13 @@ For each selected research interest, score 0–10 with short supporting evidence
 - 2–3: occasional involvement.
 - 0–1: no meaningful connection.
 
-Compute the weighted fit score transparently. Keep QS rank, tuition,
+Compute the weighted or equal-weight fit score transparently. Keep QS rank, tuition,
 scholarships, deadlines, and community opinions out of this score.
 
 ### 4. Shortlist
 
-Select the most research-relevant advisors for objective feasibility research.
+Select up to `shortlist_target` research-relevant advisors for objective
+feasibility research.
 Preserve excluded candidates and reasons. Do not deep-profile all discovery
 rows merely to fill an output.
 
@@ -98,13 +105,15 @@ rows merely to fill an output.
 
 For every shortlisted advisor:
 
-1. Identify each real school, program, degree, and intake through which the user
+1. Confirm that target degree and intake are present. If either is missing,
+   preserve the shortlist and pause for only those fields.
+2. Identify each real school, program, degree, and intake through which the user
    could apply.
-2. Reuse application facts already encountered.
-3. Search only missing or stale fields from official sources.
-4. Store school/program facts once in `program_records.json`; join them to all
+3. Reuse application facts already encountered.
+4. Search only missing or stale fields from official sources.
+5. Store school/program facts once in `program_records.json`; join them to all
    relevant advisors.
-5. Store variable application materials and advisor contact requirements as
+6. Store variable application materials and advisor contact requirements as
    multiline text, not invented Boolean fields.
 
 ### 6. Objective feasibility gate

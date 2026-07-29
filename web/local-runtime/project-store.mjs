@@ -8,15 +8,17 @@ const defaultProjectInput = {
   degree: "",
   target: "",
   interests: [],
+  shortlistTarget: 10,
 };
 
-export const DEFAULT_FINDER_SECTIONS = [
+export const DEFAULT_DETECTIVE_SECTIONS = [
   "identity_current_role",
   "recent_research",
   "current_projects_recruiting",
 ];
 
 export const DETECTIVE_SECTIONS = [
+  ...DEFAULT_DETECTIVE_SECTIONS,
   "research_output_trend",
   "group_members_outcomes",
   "guidance_group_ecology",
@@ -125,19 +127,60 @@ export function createProjectStore(projectRoot) {
 
   function normalizeInterests(input) {
     if (!Array.isArray(input)) return [];
-    return input
+    const interests = input
       .map((interest) => ({
         name: String(interest?.name || "").trim().slice(0, 120),
         weight: Number(interest?.weight),
       }))
-      .filter(
-        (interest) =>
-          interest.name && Number.isFinite(interest.weight) && interest.weight > 0,
-      )
-      .map((interest) => ({
-        ...interest,
-        weight: Math.min(100, Math.round(interest.weight * 10) / 10),
-      }));
+      .filter((interest) => interest.name);
+    if (!interests.length) return [];
+
+    const explicitTotal = interests.reduce(
+      (sum, interest) =>
+        sum + (Number.isFinite(interest.weight) && interest.weight > 0 ? interest.weight : 0),
+      0,
+    );
+    const missingCount = interests.filter(
+      (interest) => !Number.isFinite(interest.weight) || interest.weight <= 0,
+    ).length;
+    const explicitCount = interests.length - missingCount;
+    const fallbackWeight =
+      explicitTotal > 0 && explicitTotal < 100 && missingCount > 0
+        ? (100 - explicitTotal) / missingCount
+        : explicitTotal > 0 && explicitCount > 0
+          ? explicitTotal / explicitCount
+          : 1;
+    const basis = interests.map((interest) => ({
+      ...interest,
+      weight:
+        Number.isFinite(interest.weight) && interest.weight > 0
+          ? interest.weight
+          : fallbackWeight,
+    }));
+    const basisTotal = basis.reduce((sum, interest) => sum + interest.weight, 0);
+    return basis.map((interest, index) => ({
+      name: interest.name,
+      weight:
+        index === basis.length - 1
+          ? Math.round(
+              (100 -
+                basis
+                  .slice(0, -1)
+                  .reduce(
+                    (sum, item) =>
+                      sum + Math.round((item.weight / basisTotal) * 1000) / 10,
+                    0,
+                  )) *
+                10,
+            ) / 10
+          : Math.round((interest.weight / basisTotal) * 1000) / 10,
+    }));
+  }
+
+  function normalizeShortlistTarget(value, fallback = 10) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(5, Math.min(50, Math.round(parsed)));
   }
 
   function normalizeSectionList(input, allowed, fallback = []) {
@@ -155,17 +198,13 @@ export function createProjectStore(projectRoot) {
         false,
     );
     return {
-      finderSections: normalizeSectionList(
-        input?.finderSections ?? existing.finderSections,
-        DEFAULT_FINDER_SECTIONS,
-        DEFAULT_FINDER_SECTIONS,
-      ),
       selectedAdvisorProgramIds: [
         ...new Set((selectedIds || []).map(String).filter(Boolean)),
       ].slice(0, 30),
       selectedSections: normalizeSectionList(
         input?.selectedSections ?? existing.selectedSections,
         DETECTIVE_SECTIONS,
+        DEFAULT_DETECTIVE_SECTIONS,
       ),
       communitySources: {
         consented,
@@ -184,42 +223,53 @@ export function createProjectStore(projectRoot) {
   }
 
   function normalizeMetadata(metadata) {
+    const upgradingFromFinderSelections = Number(metadata.schemaVersion || 0) < 3;
     return {
       ...metadata,
-      schemaVersion: 2,
+      schemaVersion: 3,
+      shortlistTarget: normalizeShortlistTarget(metadata.shortlistTarget),
       investigation: normalizeInvestigation(
-        metadata.investigation,
+        upgradingFromFinderSelections &&
+          !(metadata.investigation?.selectedSections || []).length
+          ? {
+              ...metadata.investigation,
+              selectedSections: DEFAULT_DETECTIVE_SECTIONS,
+            }
+          : metadata.investigation,
         metadata.investigation,
       ),
     };
   }
 
   function projectReadiness(metadata) {
-    const totalWeight = (metadata.interests || []).reduce(
-      (sum, interest) => sum + Number(interest.weight || 0),
-      0,
-    );
+    const hasCv = Boolean(metadata.cv?.path);
+    const hasInterests = Array.isArray(metadata.interests) && metadata.interests.length > 0;
     const checks = [
-      { key: "cv", label: "上传真实 CV", complete: Boolean(metadata.cv?.path) },
-      { key: "degree", label: "填写目标学位", complete: Boolean(metadata.degree) },
-      { key: "season", label: "填写申请季", complete: Boolean(metadata.season) },
       { key: "target", label: "填写目标院校或地区范围", complete: Boolean(metadata.target) },
       {
-        key: "interests",
-        label: "填写研究兴趣，并让权重合计为 100%",
-        complete:
-          Array.isArray(metadata.interests) &&
-          metadata.interests.length > 0 &&
-          Math.abs(totalWeight - 100) < 0.01,
+        key: "matching_signal",
+        label: "上传 CV 或填写至少一个研究兴趣",
+        complete: hasCv || hasInterests,
       },
+    ];
+    const objectiveChecks = [
+      { key: "degree", label: "填写目标学位", complete: Boolean(metadata.degree) },
+      { key: "season", label: "填写申请季", complete: Boolean(metadata.season) },
     ];
     return {
       ready: checks.every((item) => item.complete),
+      phase1Ready: checks.every((item) => item.complete),
+      objectiveReady: objectiveChecks.every((item) => item.complete),
       completed: checks.filter((item) => item.complete).length,
       total: checks.length,
       checks,
       missing: checks.filter((item) => !item.complete).map((item) => item.label),
-      interestWeightTotal: Math.round(totalWeight * 10) / 10,
+      objectiveChecks,
+      objectiveMissing: objectiveChecks
+        .filter((item) => !item.complete)
+        .map((item) => item.label),
+      matchingSignal: hasCv ? "cv" : hasInterests ? "interests" : "none",
+      interestWeightTotal: hasInterests ? 100 : 0,
     };
   }
 
@@ -271,7 +321,7 @@ export function createProjectStore(projectRoot) {
 
     const now = new Date().toISOString();
     const metadata = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       id: slug,
       slug,
       name: String(input.name || slug).trim(),
@@ -279,6 +329,7 @@ export function createProjectStore(projectRoot) {
       degree: String(input.degree || "").trim(),
       target: String(input.target || "").trim(),
       interests: normalizeInterests(input.interests),
+      shortlistTarget: normalizeShortlistTarget(input.shortlistTarget),
       cv: null,
       investigation: normalizeInvestigation(input.investigation),
       createdAt: now,
@@ -306,22 +357,6 @@ export function createProjectStore(projectRoot) {
       mkdir(resolve(target, ".claude", "skills"), { recursive: true }),
     ]);
     await Promise.all([
-      cp(sourceSkills, resolve(target, ".agents", "skills"), {
-        recursive: true,
-        force: true,
-        filter: (source) =>
-          basename(source) !== ".DS_Store" &&
-          !COMMUNITY_CACHE_FILES.has(basename(source)) &&
-          !basename(source).endsWith(".tmp"),
-      }),
-      cp(sourceSkills, resolve(target, ".claude", "skills"), {
-        recursive: true,
-        force: true,
-        filter: (source) =>
-          basename(source) !== ".DS_Store" &&
-          !COMMUNITY_CACHE_FILES.has(basename(source)) &&
-          !basename(source).endsWith(".tmp"),
-      }),
       writeFile(projectFile, JSON.stringify(metadata, null, 2)),
       writeFile(resolve(target, "status.json"), JSON.stringify(status, null, 2)),
       writeFile(resolve(target, "outputs", "candidates.json"), "[]\n"),
@@ -344,8 +379,29 @@ export function createProjectStore(projectRoot) {
 `,
       ),
     ]);
+    await syncProjectSkills(slug);
 
     return getProject(slug);
+  }
+
+  async function syncProjectSkills(slug) {
+    const target = projectPath(slug);
+    const copyOptions = {
+      recursive: true,
+      force: true,
+      filter: (source) =>
+        basename(source) !== ".DS_Store" &&
+        !COMMUNITY_CACHE_FILES.has(basename(source)) &&
+        !basename(source).endsWith(".tmp"),
+    };
+    await Promise.all([
+      mkdir(resolve(target, ".agents", "skills"), { recursive: true }),
+      mkdir(resolve(target, ".claude", "skills"), { recursive: true }),
+    ]);
+    await Promise.all([
+      cp(sourceSkills, resolve(target, ".agents", "skills"), copyOptions),
+      cp(sourceSkills, resolve(target, ".claude", "skills"), copyOptions),
+    ]);
   }
 
   async function updateProject(slug, input) {
@@ -370,6 +426,10 @@ export function createProjectStore(projectRoot) {
         input.target === undefined
           ? metadata.target
           : String(input.target || "").trim().slice(0, 500),
+      shortlistTarget:
+        input.shortlistTarget === undefined
+          ? metadata.shortlistTarget
+          : normalizeShortlistTarget(input.shortlistTarget, metadata.shortlistTarget),
       interests:
         input.interests === undefined
           ? metadata.interests
@@ -378,7 +438,7 @@ export function createProjectStore(projectRoot) {
         input.investigation === undefined
           ? metadata.investigation
           : normalizeInvestigation(input.investigation, metadata.investigation),
-      schemaVersion: 2,
+      schemaVersion: 3,
       updatedAt: new Date().toISOString(),
     };
     if (!updated.name) updated.name = "未命名申请项目";
@@ -420,6 +480,7 @@ export function createProjectStore(projectRoot) {
     listProjects,
     normalizeSlug,
     setProjectCv,
+    syncProjectSkills,
     updateProject,
   };
 }

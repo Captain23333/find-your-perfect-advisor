@@ -2,10 +2,13 @@
 
 Use stable section IDs in state and user-facing Chinese labels in the UI.
 
-## Finder-collected defaults
+## Detective starting defaults
 
-These sections are checked by default. The user may uncheck one after seeing a
-warning that the shortlist may be incomplete or stale.
+These sections are checked by default when the user reaches Advisor Detective.
+Finder may already have low-cost facts for them; Detective must reuse current
+evidence and query only missing, stale, or conflicting fields. The user may
+uncheck one after seeing a warning that the background check may be incomplete
+or stale.
 
 | ID | Label |
 | --- | --- |
@@ -14,7 +17,8 @@ warning that the shortlist may be incomplete or stale.
 | `current_projects_recruiting` | 近期项目与招生状态 |
 
 The objective application-feasibility pass is required for shortlisted
-advisor-program combinations and is not a reputation checkbox.
+advisor-program combinations and remains separate from these background-check
+checkboxes.
 
 ## Detective selections
 

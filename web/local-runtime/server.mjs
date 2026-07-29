@@ -8,6 +8,14 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createProjectStore } from "./project-store.mjs";
 import {
+  claudeControlRequestToPermission,
+  claudePermissionResponse,
+  createCodexAppServerBridge,
+  normalizePermissionForUi,
+  permissionSessionKey,
+  writeJsonLine,
+} from "./agent-protocols.mjs";
+import {
   clearCommunityCache,
   getCommunityCacheStatus,
   syncCommunityCache,
@@ -355,6 +363,14 @@ function terminateRun(runId) {
   const run = activeRuns.get(runId);
   if (!run || run.finished) return false;
   run.stopped = true;
+  for (const pending of run.permissions?.values() || []) {
+    try {
+      pending.respond("deny");
+    } catch {
+      // The provider may already have closed stdin.
+    }
+  }
+  run.permissions?.clear();
 
   try {
     if (process.platform !== "win32" && run.child.pid) {
@@ -380,6 +396,66 @@ function terminateRun(runId) {
     }
   }, 2500).unref();
   return true;
+}
+
+function requestRunPermission(run, providerPermission, respond) {
+  const permission = normalizePermissionForUi({
+    ...providerPermission,
+    id: randomUUID(),
+  });
+  const sessionKey = permissionSessionKey(providerPermission);
+
+  if (run.sessionPermissionKeys.has(sessionKey)) {
+    respond("allow_once");
+    run.emit({
+      type: "permission.auto_approved",
+      source: "runtime",
+      message: `已按“本次运行允许”继续：${permission.toolName}`,
+      permission,
+    });
+    return;
+  }
+
+  run.permissions.set(permission.id, {
+    permission,
+    sessionKey,
+    respond,
+  });
+  run.emit({
+    type: "permission.requested",
+    source: "runtime",
+    message: `${permission.title} Agent 已暂停，等待你的选择。`,
+    permission,
+  });
+}
+
+function resolveRunPermission(runId, permissionId, decision) {
+  const run = activeRuns.get(runId);
+  if (!run || run.finished) return { ok: false, status: 404, error: "运行任务不存在或已经结束" };
+  const pending = run.permissions.get(permissionId);
+  if (!pending) return { ok: false, status: 404, error: "授权请求不存在或已经处理" };
+  if (!["allow_once", "allow_for_run", "deny"].includes(decision)) {
+    return { ok: false, status: 400, error: "无效的授权决定" };
+  }
+
+  if (decision === "allow_for_run" && run.metadata.provider === "claude") {
+    run.sessionPermissionKeys.add(pending.sessionKey);
+  }
+  pending.respond(decision);
+  run.permissions.delete(permissionId);
+  run.emit({
+    type: "permission.resolved",
+    source: "runtime",
+    message:
+      decision === "deny"
+        ? `已拒绝：${pending.permission.toolName}`
+        : decision === "allow_for_run"
+          ? `本次运行将继续允许同类操作：${pending.permission.toolName}`
+          : `已允许一次：${pending.permission.toolName}`,
+    permissionId,
+    decision,
+  });
+  return { ok: true, status: 200 };
 }
 
 async function listRecentRuns(projectId) {
@@ -427,12 +503,12 @@ async function startRun(request, response, origin) {
     return;
   }
   const project = await projectStore.getProject(projectId);
-  if (!project.readiness.ready) {
+  if (!project.readiness.phase1Ready) {
     sendJson(
       response,
       422,
       {
-        error: `开始寻找导师前，请先完成：${project.readiness.missing.join("、")}`,
+        error: `开始 Phase 1 前，请先完成：${project.readiness.missing.join("、")}`,
         missingInputs: project.readiness.missing,
         readiness: project.readiness,
       },
@@ -469,6 +545,7 @@ async function startRun(request, response, origin) {
   const runId = randomUUID();
   const runDirectory = resolve(project.path, "runs", runId);
   await mkdir(runDirectory, { recursive: true });
+  await projectStore.syncProjectSkills(projectId);
 
   const skillPath =
     provider === "claude"
@@ -481,7 +558,7 @@ async function startRun(request, response, origin) {
 2. 导师匹配总技能入口为：${skillPath}
 3. 本次运行的专属输出目录为：${runDirectory}
 4. 共享状态文件写入申请项目目录，最终表格和报告写入 ${resolve(project.path, "outputs")}，本次临时记录写入运行目录。
-5. 不得编造 CV、导师、招生状态或申请者经历；缺少必要输入时明确列出缺失项并停止等待。
+5. 不得编造 CV、导师、招生状态或申请者经历。Phase 1 的启动条件是目标范围，以及 CV 或至少一个研究兴趣；目标学位和申请季最迟必须在客观申请条件筛选前补齐。
 6. 每完成一个阶段，都要把真实进度同步到 ${resolve(project.path, "status.json")}。保留 JSON 格式，并使用：
    {"schemaVersion":2,"phase":"intake|finder|detective|evaluator|completed","stage":"intake|discovery|research_fit|objective_screen|selection|investigation|ranking|completed","candidateCount":0,"shortlistCount":0,"objectiveReadyCount":0,"selectedCount":0,"evidenceCount":0,"evidenceCoverage":0,"rankingCount":0,"updatedAt":"ISO-8601 时间"}
    数字必须来自该项目实际产物；尚未产生的结果保持 0，不能用界面演示数字填充。
@@ -491,34 +568,31 @@ async function startRun(request, response, origin) {
 8. 本次项目保存的调查配置为：${JSON.stringify(project.investigation || {}, null, 2)}
    必须使用其中精确的 selectedAdvisorProgramIds 和 selectedSections，不能只按人数或 Top N 猜测。
 9. Web 社区资料缓存目录为：${resolve(project.path, "community-cache")}。只有 communitySources.consented 为 true 且相关维度被选中时才可读取；searchReady 不为 true 时必须写“未完成检索”。
-10. 不要执行 git commit、git push、发布、发送邮件或任何对外提交操作。`;
+10. Phase 1 目标 shortlist 数量为 ${project.shortlistTarget}。先建立约 ${Math.min(
+    60,
+    Math.max(30, project.shortlistTarget * 3),
+  )} 位候选的发现池，再按研究匹配与客观条件筛到目标数量；不得把 Phase 2 的社区风评、组内生态或全面社交调查提前到 Phase 1。
+11. 不要执行 git commit、git push、发布、发送邮件或任何对外提交操作。`;
 
   const command =
     provider === "codex"
       ? {
           executable: codexExecutable,
-          args: [
-            "exec",
-            "--json",
-            "--sandbox",
-            "workspace-write",
-            "-C",
-            project.path,
-            "--skip-git-repo-check",
-            effectivePrompt,
-          ],
+          args: ["app-server", "--stdio"],
         }
       : provider === "claude"
         ? {
             executable: "claude",
             args: [
-              "-p",
-              effectivePrompt,
+              "--input-format",
+              "stream-json",
               "--output-format",
               "stream-json",
               "--verbose",
               "--permission-mode",
-              "auto",
+              "default",
+              "--permission-prompt-tool",
+              "stdio",
               "--setting-sources",
               "user,project,local",
             ],
@@ -526,15 +600,8 @@ async function startRun(request, response, origin) {
         : {
             executable: codexExecutable,
             args: [
-              "exec",
-              "--json",
-              "--sandbox",
-              "workspace-write",
-              "-C",
-              project.path,
-              "--skip-git-repo-check",
-              "--model",
-              customProviderSession.model,
+              "app-server",
+              "--stdio",
               "-c",
               'model_provider="advisor_custom"',
               "-c",
@@ -545,7 +612,6 @@ async function startRun(request, response, origin) {
               'model_providers.advisor_custom.env_key="ADVISOR_ATLAS_CUSTOM_API_KEY"',
               "-c",
               'model_providers.advisor_custom.wire_api="responses"',
-              effectivePrompt,
             ],
           };
 
@@ -606,7 +672,7 @@ async function startRun(request, response, origin) {
       FORCE_COLOR: "0",
     },
     detached: process.platform !== "win32",
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
 
   const run = {
@@ -617,8 +683,75 @@ async function startRun(request, response, origin) {
     eventLog,
     finished: false,
     stopped: false,
+    protocolCompleted: false,
+    protocolError: null,
+    permissions: new Map(),
+    sessionPermissionKeys: new Set(),
+    emit,
   };
   activeRuns.set(runId, run);
+
+  const requestPermission = (permission, respond) =>
+    requestRunPermission(run, permission, respond);
+  const codexBridge =
+    provider === "codex" || provider === "custom"
+      ? createCodexAppServerBridge({
+          child,
+          cwd: project.path,
+          prompt: effectivePrompt,
+          model: provider === "custom" ? customProviderSession.model : null,
+          modelProvider: provider === "custom" ? "advisor_custom" : null,
+          emit,
+          requestPermission,
+          onTurnComplete: ({ status, error }) => {
+            run.protocolCompleted = status === "completed";
+            run.protocolError = error;
+            child.kill("SIGTERM");
+          },
+        })
+      : null;
+
+  function handleProviderLine(line, streamName) {
+    if (streamName === "stdout" && codexBridge?.handleLine(line)) return;
+
+    if (streamName === "stdout" && provider === "claude") {
+      let parsed = null;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        // Fall through to the ordinary stream renderer.
+      }
+      const permission = claudeControlRequestToPermission(parsed);
+      if (permission) {
+        requestPermission(permission, (decision) => {
+          writeJsonLine(child.stdin, claudePermissionResponse(permission, decision));
+        });
+        return;
+      }
+      if (parsed?.type === "control_request") {
+        writeJsonLine(child.stdin, {
+          type: "control_response",
+          response: {
+            subtype: "success",
+            request_id: parsed.request_id,
+            response: {
+              behavior: "deny",
+              message: `Advisor Atlas 暂不支持 ${parsed.request?.subtype || "未知"} 控制请求`,
+            },
+          },
+        });
+        return;
+      }
+      if (parsed?.type === "result") {
+        run.protocolCompleted = !parsed.is_error;
+        run.protocolError = parsed.is_error ? parsed.result || "Claude 任务失败" : null;
+        setTimeout(() => child.kill("SIGTERM"), 25).unref();
+      }
+    }
+
+    const event = normalizeEvent(provider, line, streamName);
+    if (event.message || streamName === "stderr") emit(event);
+  }
 
   for (const [streamName, stream] of [
     ["stdout", child.stdout],
@@ -632,16 +765,37 @@ async function startRun(request, response, origin) {
       pending = lines.pop() || "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        const event = normalizeEvent(provider, line, streamName);
-        if (event.message || streamName === "stderr") emit(event);
+        handleProviderLine(line, streamName);
       }
     });
     stream.on("end", () => {
-      if (pending.trim()) emit(normalizeEvent(provider, pending, streamName));
+      if (pending.trim()) handleProviderLine(pending, streamName);
+    });
+  }
+
+  if (provider === "claude") {
+    writeJsonLine(child.stdin, {
+      type: "user",
+      message: {
+        role: "user",
+        content: effectivePrompt,
+      },
+    });
+  } else {
+    void codexBridge.start().catch((error) => {
+      run.protocolError = error.message;
+      emit({
+        type: "run.error",
+        source: "runtime",
+        message: `Codex app-server 启动失败：${error.message}`,
+      });
+      child.kill("SIGTERM");
     });
   }
 
   child.on("error", async (error) => {
+    codexBridge?.fail(error);
+    run.protocolError = error.message;
     emit({
       type: "run.error",
       source: "runtime",
@@ -651,7 +805,20 @@ async function startRun(request, response, origin) {
 
   child.on("close", async (code, signal) => {
     run.finished = true;
-    metadata.status = run.stopped ? "stopped" : code === 0 ? "completed" : "failed";
+    codexBridge?.fail(new Error("Codex app-server 已关闭"));
+    for (const pendingPermission of run.permissions.values()) {
+      try {
+        pendingPermission.respond("deny");
+      } catch {
+        // Provider stdin may already be closed.
+      }
+    }
+    run.permissions.clear();
+    metadata.status = run.stopped
+      ? "stopped"
+      : run.protocolCompleted || (provider === "claude" && code === 0)
+        ? "completed"
+        : "failed";
     metadata.finishedAt = new Date().toISOString();
     metadata.exitCode = code;
     metadata.signal = signal;
@@ -667,7 +834,8 @@ async function startRun(request, response, origin) {
           ? "本地任务已完成"
           : metadata.status === "stopped"
             ? "本地任务已停止"
-            : `本地任务异常结束（退出码 ${code ?? "unknown"}）`,
+            : run.protocolError ||
+              `本地任务异常结束（退出码 ${code ?? "unknown"}）`,
       status: metadata.status,
       exitCode: code,
     });
@@ -853,6 +1021,25 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && requestUrl.pathname === "/api/runs") {
       await startRun(request, response, origin);
+      return;
+    }
+
+    const permissionMatch = requestUrl.pathname.match(
+      /^\/api\/runs\/([^/]+)\/permissions\/([^/]+)$/,
+    );
+    if (request.method === "POST" && permissionMatch) {
+      const body = await readJson(request);
+      const result = resolveRunPermission(
+        permissionMatch[1],
+        permissionMatch[2],
+        body.decision,
+      );
+      sendJson(
+        response,
+        result.status,
+        result.ok ? { ok: true } : { error: result.error },
+        origin,
+      );
       return;
     }
 

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 
 const baseUrl = process.env.ADVISOR_ATLAS_RUNTIME_URL || "http://127.0.0.1:4318";
 const [command = "help", ...args] = process.argv.slice(2);
@@ -32,11 +33,12 @@ function printHelp() {
   npm run backend -- health
   npm run backend -- projects
   npm run backend -- create --name "我的博士申请"
-  npm run backend -- update --project my-phd-application --season "2028 Fall" --degree PhD --target "美国 HCI/AI 项目" --interests "Human-AI:60,AI4Health:40"
+  npm run backend -- update --project my-phd-application --target "美国 HCI/AI 项目" --shortlist 10 --interests "Human-AI,AI4Health"
   npm run backend -- upload --project my-phd-application --file "/absolute/path/CV.pdf"
   npm run backend -- run --project my-phd-application --provider codex --prompt "使用 advisor-pipeline 开始导师匹配"
 
 provider 可选：codex、claude、custom
+研究兴趣权重可省略；例如 "Human-AI,AI4Health" 会自动等权。
 `);
 }
 
@@ -74,16 +76,19 @@ try {
       .map((item) => {
         const separator = item.lastIndexOf(":");
         return {
-          name: separator >= 0 ? item.slice(0, separator).trim() : "",
+          name: separator >= 0 ? item.slice(0, separator).trim() : item.trim(),
           weight: separator >= 0 ? Number(item.slice(separator + 1)) : 0,
         };
       })
-      .filter((item) => item.name && item.weight > 0);
+      .filter((item) => item.name);
     const payload = {
       ...(value("--name") ? { name: value("--name") } : {}),
       ...(value("--season") ? { season: value("--season") } : {}),
       ...(value("--degree") ? { degree: value("--degree") } : {}),
       ...(value("--target") ? { target: value("--target") } : {}),
+      ...(value("--shortlist")
+        ? { shortlistTarget: Number(value("--shortlist")) }
+        : {}),
       ...(value("--interests") ? { interests } : {}),
     };
     console.log(
@@ -134,20 +139,62 @@ try {
     if (!response.body) throw new Error("后端没有返回事件流");
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
+    const terminalPrompt = process.stdin.isTTY
+      ? createInterface({ input: process.stdin, output: process.stdout })
+      : null;
     let pending = "";
-    while (true) {
-      const { value: chunk, done } = await reader.read();
-      if (done) break;
-      pending += decoder.decode(chunk, { stream: true });
-      const lines = pending.split(/\r?\n/);
-      pending = lines.pop() || "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const event = JSON.parse(line);
-        if (event.message) {
-          console.log(`[${event.source}] ${event.message}`);
+    try {
+      while (true) {
+        const { value: chunk, done } = await reader.read();
+        if (done) break;
+        pending += decoder.decode(chunk, { stream: true });
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line);
+          if (event.message) {
+            console.log(`[${event.source}] ${event.message}`);
+          }
+          if (event.type === "permission.requested" && event.permission && event.runId) {
+            const detail =
+              event.permission.command ||
+              event.permission.path ||
+              event.permission.reason ||
+              JSON.stringify(event.permission.input);
+            let decision = "deny";
+            if (terminalPrompt) {
+              console.log(`\n${event.permission.title}`);
+              console.log(`工具：${event.permission.toolName}`);
+              if (detail) console.log(detail);
+              const answer = (
+                await terminalPrompt.question(
+                  "选择 [o] 允许一次 / [r] 本次运行允许 / [d] 拒绝（默认 d）：",
+                )
+              )
+                .trim()
+                .toLowerCase();
+              decision =
+                answer === "o"
+                  ? "allow_once"
+                  : answer === "r"
+                    ? "allow_for_run"
+                    : "deny";
+            } else {
+              console.log("[runtime] 非交互终端无法确认，已拒绝该操作");
+            }
+            await jsonRequest(
+              `/api/runs/${event.runId}/permissions/${event.permission.id}`,
+              {
+                method: "POST",
+                body: JSON.stringify({ decision }),
+              },
+            );
+          }
         }
       }
+    } finally {
+      terminalPrompt?.close();
     }
   } else {
     printHelp();

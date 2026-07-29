@@ -1,7 +1,8 @@
 # Advisor Atlas shared data contract
 
-Use `schema_version: 2`. Store structured state in the application project, not
-inside a skill folder.
+Use project-input `schema_version: 3`; status and researched-output records
+remain version 2. Store structured state in the application project, not inside
+a skill folder.
 
 ## Project files
 
@@ -125,6 +126,7 @@ Persist exact values in `project.json`:
 
 ```json
 {
+  "shortlist_target": 10,
   "investigation": {
     "selected_advisor_program_ids": [],
     "selected_sections": [],

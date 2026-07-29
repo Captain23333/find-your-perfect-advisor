@@ -389,6 +389,13 @@ button {
   font-size: 9px;
 }
 
+.hero-side > small {
+  max-width: 190px;
+  color: #aaa5af;
+  font-size: 7px;
+  text-align: right;
+}
+
 .provider-pill {
   min-width: 120px;
   height: 38px;
@@ -1021,6 +1028,73 @@ button {
 .add-interest:disabled {
   color: #bbb7c1;
   cursor: not-allowed;
+}
+
+.shortlist-field {
+  padding: 11px;
+  border: 1px solid #e5e2ea;
+  border-radius: 10px;
+  background: #fbfafc;
+}
+
+.shortlist-field > span,
+.shortlist-field > small {
+  display: block;
+}
+
+.shortlist-field > span {
+  color: #514d59;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.shortlist-field > small {
+  margin-top: 7px;
+  color: #aaa6b0;
+  font-size: 7px;
+  line-height: 1.5;
+}
+
+.shortlist-control {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) 84px;
+  gap: 5px;
+}
+
+.shortlist-control > button {
+  height: 31px;
+  border: 1px solid #dfdce5;
+  border-radius: 7px;
+  color: #77717f;
+  background: #fff;
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.shortlist-control > button.active {
+  border-color: #796dd6;
+  color: var(--violet-dark);
+  background: var(--violet-soft);
+}
+
+.shortlist-control > label {
+  position: relative;
+}
+
+.shortlist-control > label span {
+  position: absolute;
+  top: -6px;
+  left: 6px;
+  padding: 0 3px;
+  color: #9994a0;
+  background: #fbfafc;
+  font-size: 6px;
+}
+
+.shortlist-control > label input {
+  height: 31px;
+  padding-top: 4px;
 }
 
 .save-intake {
@@ -2049,9 +2123,170 @@ input[type="checkbox"] {
 }
 
 .run-state.running,
-.run-state.starting {
+.run-state.starting,
+.run-state.waiting_permission {
   color: #5f54bd;
   background: #ebe8ff;
+}
+
+.run-state.waiting_permission {
+  color: #96621d;
+  background: #fff0d8;
+}
+
+.permission-section {
+  background: #fffaf1;
+}
+
+.permission-card {
+  padding: 16px;
+  border: 1px solid #e4bf7d;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(90, 65, 24, 0.08);
+}
+
+.permission-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.permission-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #fff;
+  background: #c48a32;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.permission-icon.file {
+  background: #695bc6;
+}
+
+.permission-icon.network {
+  background: #398a69;
+}
+
+.permission-heading small,
+.permission-heading h3 {
+  display: block;
+}
+
+.permission-heading small {
+  color: #a57838;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.permission-heading h3 {
+  margin: 3px 0 0;
+  font-size: 12px;
+}
+
+.permission-meta {
+  margin-top: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.permission-meta span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #716a76;
+  background: #f1eff3;
+  font-size: 7px;
+}
+
+.permission-card > p {
+  margin: 10px 0 0;
+  color: #77717c;
+  font-size: 8px;
+  line-height: 1.6;
+}
+
+.permission-card pre {
+  max-height: 145px;
+  margin: 10px 0 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid #35313b;
+  border-radius: 8px;
+  color: #e8e4eb;
+  background: #29262f;
+  font: 8px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.permission-cwd {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 8px;
+  color: #9993a0;
+  font-size: 7px;
+}
+
+.permission-cwd code {
+  overflow: hidden;
+  color: #6b6570;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permission-actions {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 0.8fr 1fr 1.2fr;
+  gap: 7px;
+}
+
+.permission-actions button {
+  min-height: 34px;
+  border: 1px solid #8175da;
+  border-radius: 8px;
+  color: var(--violet-dark);
+  background: #f5f3ff;
+  font-size: 8px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.permission-actions button.permission-session {
+  color: #fff;
+  background: var(--violet);
+}
+
+.permission-actions button.permission-deny {
+  border-color: #dfbbb5;
+  color: #a2564e;
+  background: #fff5f3;
+}
+
+.permission-actions button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+.permission-note {
+  margin-top: 9px;
+  display: block;
+  color: #99939f;
+  font-size: 7px;
+  line-height: 1.5;
+}
+
+.permission-queue {
+  margin: 8px 0 0;
+  color: #91764a;
+  font-size: 8px;
 }
 
 .run-state.completed {
@@ -2428,6 +2663,21 @@ input[type="checkbox"] {
   line-height: 1.5;
 }
 
+.detective-options label.default-section {
+  border-color: #cfc9ee;
+  background: #f6f4ff;
+}
+
+.detective-options label b {
+  margin-left: auto;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: #6659bc;
+  background: #e9e5ff;
+  font-size: 6px;
+  font-weight: 750;
+}
+
 .token-hint {
   margin-top: 14px;
   padding: 10px 12px;
@@ -2644,6 +2894,14 @@ input[type="checkbox"] {
 
   .application-row {
     grid-template-columns: 1fr;
+  }
+
+  .shortlist-control {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shortlist-control > label {
+    grid-column: 1 / -1;
   }
 
   .scope-options,

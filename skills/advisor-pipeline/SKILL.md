@@ -66,8 +66,18 @@ Write real counts from artifacts. Do not populate demonstration values.
 
 ## Phase 1: Advisor Finder
 
-Require a real CV, degree, intake, target, and weighted interests. Invoke
-Advisor Finder without duplicating its instructions.
+Require a target scope plus either a real CV or at least one research interest.
+Weights are optional. Persist the user-selected `shortlist_target` (default 10)
+and invoke Advisor Finder without duplicating its instructions.
+
+Finder performs a fixed low-cost scan for identity/current role, high-level
+recent research, representative work, and official recruiting signals. These
+facts may later be reused by Detective, but Finder must not pre-run community
+reputation, group ecology, work-style, or other selected deep-research sections.
+
+Degree and intake can be supplied after discovery. Require them before Finder
+starts the objective application-feasibility pass, then query only missing
+official application facts for the shortlist.
 
 Completion requires:
 
@@ -80,14 +90,17 @@ Pause for user selection after the objective screen.
 
 ## Selection gate
 
-Persist:
+Persist after the objective screen:
 
 - Exact `selected_advisor_program_ids`.
 - Exact `selected_sections`.
 - Community-source consent.
 
-Show a warning when the user deselects default Finder sections. Show a
-qualitative cost warning based on selected advisor count and Detective sections.
+Default-select the three Detective starting sections:
+`identity_current_role`, `recent_research`, and
+`current_projects_recruiting`. Let the user deselect them after a completeness
+warning. Show a qualitative cost warning based on selected advisor count and
+Detective sections.
 
 Never infer selected advisors from Top N when exact user selections exist.
 

@@ -4,7 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type Provider = "Claude Code" | "Codex" | "Custom API";
 type View = "overview" | "candidates" | "evidence" | "ranking";
-type RunState = "idle" | "starting" | "running" | "completed" | "failed" | "stopped";
+type RunState =
+  | "idle"
+  | "starting"
+  | "running"
+  | "waiting_permission"
+  | "completed"
+  | "failed"
+  | "stopped";
 
 type ProviderHealth = {
   installed: boolean;
@@ -42,10 +49,15 @@ type ProjectStatus = {
 
 type ProjectReadiness = {
   ready: boolean;
+  phase1Ready: boolean;
+  objectiveReady: boolean;
   completed: number;
   total: number;
   checks: Array<{ key: string; label: string; complete: boolean }>;
   missing: string[];
+  objectiveChecks: Array<{ key: string; label: string; complete: boolean }>;
+  objectiveMissing: string[];
+  matchingSignal: "cv" | "interests" | "none";
   interestWeightTotal: number;
 };
 
@@ -57,13 +69,13 @@ type AdvisorProject = {
   season: string;
   degree: string;
   target: string;
+  shortlistTarget: number;
   interests: Array<{ name: string; weight: number }>;
   updatedAt: string;
   path: string;
   status: ProjectStatus;
   candidates: AdvisorCandidate[];
   investigation: {
-    finderSections: string[];
     selectedAdvisorProgramIds: string[];
     selectedSections: string[];
     communitySources: {
@@ -106,6 +118,25 @@ type RunEvent = {
   message?: string;
   status?: string;
   outputDirectory?: string;
+  permission?: PermissionRequest;
+  permissionId?: string;
+  decision?: PermissionDecision;
+};
+
+type PermissionDecision = "allow_once" | "allow_for_run" | "deny";
+
+type PermissionRequest = {
+  id: string;
+  kind: "command" | "file" | "network" | "permission" | "tool";
+  toolName: string;
+  title: string;
+  description: string | null;
+  reason: string | null;
+  command: string | null;
+  cwd: string | null;
+  path: string | null;
+  input: unknown;
+  requestedAt: string;
 };
 
 const runtimeUrl = "http://127.0.0.1:4318";
@@ -115,13 +146,10 @@ const providerKey: Record<Provider, keyof RuntimeHealth["providers"]> = {
   "Custom API": "custom",
 };
 
-const finderSectionOptions = [
-  { id: "identity_current_role", label: "基础身份与当前职位" },
-  { id: "recent_research", label: "最近三年研究兴趣与方向" },
-  { id: "current_projects_recruiting", label: "近期项目与招生状态" },
-];
-
 const detectiveSectionOptions = [
+  { id: "identity_current_role", label: "基础身份与当前职位", defaultSelected: true },
+  { id: "recent_research", label: "最近三年研究兴趣与方向", defaultSelected: true },
+  { id: "current_projects_recruiting", label: "近期项目与招生状态", defaultSelected: true },
   { id: "research_output_trend", label: "研究产出与趋势" },
   { id: "group_members_outcomes", label: "课题组成员及去向" },
   { id: "guidance_group_ecology", label: "指导环境与组内生态" },
@@ -141,14 +169,13 @@ type CommunityCacheStatus = {
 
 const defaultTask = `请完整读取 skills/advisor-pipeline/SKILL.md，并从 Phase 1 开始导师匹配。
 
-先检查以下必要输入是否齐全：
-1. 真实 CV 文件
-2. 目标学校或目标范围
-3. 研究兴趣及权重
-4. 目标学位和申请季
+Phase 1 启动前只检查：
+1. 已填写目标学校或目标范围
+2. 已提供真实 CV，或者至少一个研究兴趣
 
-如果缺少任何输入，请只列出缺失项并停止等待，不要编造信息。
-如果输入齐全，严格按照 skill 执行，并保留每条关键结论的来源。`;
+目标学位和申请季可以稍后补充，但进入客观申请条件筛选前必须齐全。
+研究兴趣和权重是可选补充；没有权重时按等权处理。
+严格按照 skill 执行，并保留每条关键结论的来源。`;
 
 function Sparkline() {
   return (
@@ -183,14 +210,14 @@ export default function Home() {
     season: string;
     degree: string;
     target: string;
+    shortlistTarget: string;
     interests: Array<{ name: string; weight: string }>;
-    finderSections: string[];
   }>({
     season: "",
     degree: "",
     target: "",
+    shortlistTarget: "10",
     interests: [{ name: "", weight: "" }],
-    finderSections: finderSectionOptions.map((item) => item.id),
   });
   const [intakeSaving, setIntakeSaving] = useState(false);
   const [intakeDirty, setIntakeDirty] = useState(false);
@@ -201,6 +228,8 @@ export default function Home() {
   const [runId, setRunId] = useState("");
   const [runOutputDirectory, setRunOutputDirectory] = useState("");
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
+  const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
+  const [resolvingPermissionId, setResolvingPermissionId] = useState("");
   const [customForm, setCustomForm] = useState({
     name: "Custom API",
     baseUrl: "",
@@ -213,6 +242,7 @@ export default function Home() {
   );
   const [customMessage, setCustomMessage] = useState("");
   const logEndRef = useRef<HTMLDivElement | null>(null);
+  const runIdRef = useRef("");
   const intakeRef = useRef<HTMLElement | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -319,34 +349,39 @@ export default function Home() {
   };
   const projectReadiness: ProjectReadiness = activeProject?.readiness || {
     ready: false,
+    phase1Ready: false,
+    objectiveReady: false,
     completed: 0,
-    total: 5,
+    total: 2,
     checks: [],
-    missing: ["上传真实 CV", "填写目标学位", "填写申请季", "填写目标院校或地区范围", "填写研究兴趣"],
+    missing: ["填写目标院校或地区范围", "上传 CV 或填写至少一个研究兴趣"],
+    objectiveChecks: [],
+    objectiveMissing: ["填写目标学位", "填写申请季"],
+    matchingSignal: "none",
     interestWeightTotal: 0,
   };
   const draftInterestTotal = applicationDraft.interests.reduce(
     (sum, interest) => sum + (Number(interest.weight) || 0),
     0,
   );
-  const draftInterestReady =
-    applicationDraft.interests.some(
-      (interest) => interest.name.trim() && Number(interest.weight) > 0,
-    ) && Math.abs(draftInterestTotal - 100) < 0.01;
+  const hasDraftInterests = applicationDraft.interests.some((interest) =>
+    interest.name.trim(),
+  );
   const draftCompleted = [
-    Boolean(filePath),
-    Boolean(applicationDraft.degree.trim()),
-    Boolean(applicationDraft.season.trim()),
     Boolean(applicationDraft.target.trim()),
-    draftInterestReady,
+    Boolean(filePath) || hasDraftInterests,
   ].filter(Boolean).length;
   const draftMissing = [
-    !filePath ? "上传真实 CV" : "",
-    !applicationDraft.degree.trim() ? "填写目标学位" : "",
-    !applicationDraft.season.trim() ? "填写申请季" : "",
     !applicationDraft.target.trim() ? "填写目标院校或地区范围" : "",
-    !draftInterestReady ? "填写研究兴趣，并让权重合计为 100%" : "",
+    !filePath && !hasDraftInterests ? "上传 CV 或填写至少一个研究兴趣" : "",
   ].filter(Boolean);
+  const activePermission = pendingPermissions[0] || null;
+  const activePermissionDetail = activePermission
+    ? activePermission.command ||
+      activePermission.path ||
+      activePermission.reason ||
+      JSON.stringify(activePermission.input, null, 2)
+    : "";
 
   useEffect(() => {
     if (!activeProject) return;
@@ -354,15 +389,13 @@ export default function Home() {
       season: activeProject.season || "",
       degree: activeProject.degree || "",
       target: activeProject.target || "",
+      shortlistTarget: String(activeProject.shortlistTarget || 10),
       interests: activeProject.interests?.length
         ? activeProject.interests.map((interest) => ({
             name: interest.name,
             weight: String(interest.weight),
           }))
         : [{ name: "", weight: "" }],
-      finderSections:
-        activeProject.investigation?.finderSections ||
-        finderSectionOptions.map((item) => item.id),
     });
     setSelected(
       new Set(activeProject.investigation?.selectedAdvisorProgramIds || []),
@@ -405,9 +438,9 @@ export default function Home() {
       meta:
         projectStatus.candidateCount > 0
           ? `已找到 ${projectStatus.candidateCount} 位真实候选`
-          : projectReadiness.ready
+          : projectReadiness.phase1Ready
             ? "资料已齐全，可以启动"
-            : `请先完成申请资料 ${projectReadiness.completed}/${projectReadiness.total}`,
+            : `Phase 1 准备 ${projectReadiness.completed}/${projectReadiness.total}`,
       state:
         projectStatus.phase === "intake"
           ? "current"
@@ -470,28 +503,23 @@ export default function Home() {
     });
   }
 
-  function toggleFinderSection(sectionId: string) {
-    const selectedNow = applicationDraft.finderSections.includes(sectionId);
-    if (
-      selectedNow &&
-      !window.confirm("取消这项可能导致导师筛选信息不完整或过时，仍要取消吗？")
-    ) {
-      return;
-    }
-    setIntakeDirty(true);
-    setApplicationDraft((current) => ({
-      ...current,
-      finderSections: selectedNow
-        ? current.finderSections.filter((item) => item !== sectionId)
-        : [...current.finderSections, sectionId],
-    }));
-  }
-
   function toggleDetectiveSection(sectionId: string) {
     setSelectedSections((current) => {
       const next = new Set(current);
-      if (next.has(sectionId)) next.delete(sectionId);
-      else next.add(sectionId);
+      if (next.has(sectionId)) {
+        const defaultSection = detectiveSectionOptions.find(
+          (item) => item.id === sectionId,
+        )?.defaultSelected;
+        if (
+          defaultSection &&
+          !window.confirm("取消这项可能让后续背调信息不完整或过时，仍要取消吗？")
+        ) {
+          return current;
+        }
+        next.delete(sectionId);
+      } else {
+        next.add(sectionId);
+      }
       void saveInvestigationConfiguration(
         false,
         { selectedSections: [...next] },
@@ -640,14 +668,11 @@ export default function Home() {
           season: applicationDraft.season,
           degree: applicationDraft.degree,
           target: applicationDraft.target,
+          shortlistTarget: Number(applicationDraft.shortlistTarget) || 10,
           interests: applicationDraft.interests.map((interest) => ({
             name: interest.name,
             weight: Number(interest.weight),
           })),
-          investigation: {
-            ...activeProject?.investigation,
-            finderSections: applicationDraft.finderSections,
-          },
         }),
       });
       const payload = await response.json();
@@ -655,8 +680,8 @@ export default function Home() {
       await refreshProjects(activeProjectId);
       setIntakeDirty(false);
       showNotice(
-        payload.project.readiness.ready
-          ? "申请资料已齐全，现在可以开始寻找导师"
+        payload.project.readiness.phase1Ready
+          ? "Phase 1 的资料已齐全，现在可以开始寻找导师"
           : `资料已保存，还需完成：${payload.project.readiness.missing.join("、")}`,
       );
     } catch (error) {
@@ -667,7 +692,7 @@ export default function Home() {
   }
 
   function startPhaseOne() {
-    if (!projectReadiness.ready) {
+    if (!projectReadiness.phase1Ready) {
       focusApplicationInput();
       return;
     }
@@ -715,7 +740,7 @@ export default function Home() {
 
   async function runAgent() {
     const health = selectedProviderHealth();
-    if (!projectReadiness.ready) {
+    if (!projectReadiness.phase1Ready) {
       setRunnerOpen(false);
       focusApplicationInput();
       return;
@@ -725,7 +750,9 @@ export default function Home() {
     setRunState("starting");
     setRunEvents([]);
     setRunId("");
+    runIdRef.current = "";
     setRunOutputDirectory("");
+    setPendingPermissions([]);
 
     try {
       const effectivePrompt = filePath
@@ -767,12 +794,46 @@ export default function Home() {
         for (const line of lines) {
           if (!line.trim()) continue;
           const event = JSON.parse(line) as RunEvent;
-          if (event.runId) setRunId(event.runId);
+          if (event.runId) {
+            runIdRef.current = event.runId;
+            setRunId(event.runId);
+          }
           if (event.outputDirectory) setRunOutputDirectory(event.outputDirectory);
+          if (event.type === "permission.requested" && event.permission) {
+            setPendingPermissions((current) => [
+              ...current.filter((item) => item.id !== event.permission?.id),
+              event.permission as PermissionRequest,
+            ]);
+            setRunState("waiting_permission");
+          }
+          if (event.type === "permission.resolved" && event.permissionId) {
+            setPendingPermissions((current) => {
+              const next = current.filter((item) => item.id !== event.permissionId);
+              if (!next.length) setRunState("running");
+              return next;
+            });
+          }
           if (event.message) {
-            setRunEvents((current) => [...current.slice(-399), event]);
+            setRunEvents((current) => {
+              const previous = current[current.length - 1];
+              if (
+                event.type === "item/agentMessage/delta" &&
+                previous?.type === event.type &&
+                previous.source === event.source
+              ) {
+                return [
+                  ...current.slice(0, -1),
+                  {
+                    ...previous,
+                    message: `${previous.message || ""}${event.message || ""}`,
+                  },
+                ];
+              }
+              return [...current.slice(-399), event];
+            });
           }
           if (event.type === "run.finished") {
+            setPendingPermissions([]);
             setRunState((event.status as RunState) || "completed");
             await refreshProjects(activeProjectId);
             if (event.status === "completed") {
@@ -783,6 +844,7 @@ export default function Home() {
         }
       }
     } catch (error) {
+      setPendingPermissions([]);
       setRunState("failed");
       setRunEvents((current) => [
         ...current,
@@ -796,9 +858,38 @@ export default function Home() {
   }
 
   async function stopAgent() {
-    if (!runId) return;
-    await fetch(`${runtimeUrl}/api/runs/${runId}/stop`, { method: "POST" });
+    const currentRunId = runIdRef.current || runId;
+    if (!currentRunId) return;
+    await fetch(`${runtimeUrl}/api/runs/${currentRunId}/stop`, { method: "POST" });
+    setPendingPermissions([]);
     setRunState("stopped");
+  }
+
+  async function resolvePermission(permissionId: string, decision: PermissionDecision) {
+    const currentRunId = runIdRef.current || runId;
+    if (!currentRunId || resolvingPermissionId) return;
+    setResolvingPermissionId(permissionId);
+    try {
+      const response = await fetch(
+        `${runtimeUrl}/api/runs/${currentRunId}/permissions/${permissionId}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ decision }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "授权决定未能发送");
+      setPendingPermissions((current) => {
+        const next = current.filter((item) => item.id !== permissionId);
+        if (!next.length) setRunState("running");
+        return next;
+      });
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "授权决定未能发送");
+    } finally {
+      setResolvingPermissionId("");
+    }
   }
 
   async function saveInvestigationConfiguration(
@@ -816,9 +907,6 @@ export default function Home() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         investigation: {
-          finderSections:
-            activeProject?.investigation?.finderSections ||
-            finderSectionOptions.map((item) => item.id),
           selectedAdvisorProgramIds:
             overrides.selectedAdvisorProgramIds || [...selected],
           selectedSections: overrides.selectedSections || [...selectedSections],
@@ -1121,12 +1209,12 @@ export default function Home() {
           <div className="top-actions">
             <button
               className="agent-button"
-              onClick={projectReadiness.ready ? startPhaseOne : focusApplicationInput}
+              onClick={() => openRunner()}
             >
               <span className={runtimeHealth ? "runtime-online" : "runtime-offline"} />
-              {projectReadiness.ready
+              {projectReadiness.phase1Ready
                 ? "开始寻找导师"
-                : `完成申请资料 ${projectReadiness.completed}/${projectReadiness.total}`}
+                : `选择引擎 · Phase 1 ${projectReadiness.completed}/${projectReadiness.total}`}
             </button>
             <button
               className="help-button"
@@ -1145,21 +1233,21 @@ export default function Home() {
               <h1>
                 {projectStatus.candidateCount > 0
                   ? "离理想导师，更近一步。"
-                  : "从一份真实 CV 开始。"}
+                  : "从申请目标开始，逐层筛选。"}
               </h1>
               <p>
                 {projectStatus.candidateCount > 0
                   ? "候选导师发现已完成。选择重点对象，开始证据可追溯的深度背调。"
-                  : projectReadiness.ready
-                    ? "申请资料已齐全。选择执行引擎后，即可开始寻找与你真正匹配的导师。"
-                    : `先完成申请资料（${projectReadiness.completed}/${projectReadiness.total}），再开始寻找导师。`}
+                  : projectReadiness.phase1Ready
+                    ? "Phase 1 资料已齐全。选择执行引擎后，即可开始低成本的导师发现与匹配。"
+                    : "模型引擎可以随时选择；启动 Phase 1 只需要目标范围，以及 CV 或研究兴趣。"}
               </p>
             </div>
             <div className="hero-side">
               <span>当前引擎</span>
               <button
                 className="provider-pill"
-                onClick={projectReadiness.ready ? () => openRunner() : focusApplicationInput}
+                onClick={() => openRunner()}
               >
                 <i
                   className={
@@ -1169,6 +1257,7 @@ export default function Home() {
                 {currentProviderHealth?.loggedIn ? provider : "选择模型"}
                 <b>⌄</b>
               </button>
+              <small>命令、文件或网络权限会在运行面板确认</small>
             </div>
           </section>
 
@@ -1235,15 +1324,9 @@ export default function Home() {
                       className={provider === item ? "selected" : ""}
                       onClick={() => {
                         const health = runtimeHealth?.providers[providerKey[item]];
-                        if (health?.installed && health.loggedIn) {
-                          setProvider(item);
-                        } else if (item === "Custom API" && projectReadiness.ready) {
-                          setProvider(item);
+                        setProvider(item);
+                        if (!health?.installed || !health.loggedIn || item === "Custom API") {
                           openRunner();
-                        } else if (!projectReadiness.ready) {
-                          focusApplicationInput();
-                        } else {
-                          chooseProvider(item);
                         }
                       }}
                     >
@@ -1297,7 +1380,7 @@ export default function Home() {
                     <button
                       aria-label={`查看${step.title}`}
                       onClick={() => {
-                        if (step.number === "01" && !projectReadiness.ready) {
+                        if (step.number === "01" && !projectReadiness.phase1Ready) {
                           focusApplicationInput();
                         } else if (step.number === "01") {
                           openProjectView("candidates");
@@ -1316,7 +1399,7 @@ export default function Home() {
             </article>
 
             <aside
-              className={`panel intake-panel ${projectReadiness.ready ? "intake-ready" : ""}`}
+              className={`panel intake-panel ${projectReadiness.phase1Ready ? "intake-ready" : ""}`}
               ref={intakeRef}
             >
               <div className="panel-heading">
@@ -1329,7 +1412,7 @@ export default function Home() {
                 </span>
               </div>
               <p className="intake-guide">
-                系统只会根据你提供的真实信息寻找导师。下列 5 项全部完成后，才会开放导师搜索。
+                Phase 1 只需目标范围，以及 CV 或研究兴趣二选一。学位与申请季可以稍后补充，但进入客观条件筛选前必须填写。
               </p>
               <div className="intake-progress" aria-label="申请资料完成进度">
                 <span
@@ -1347,7 +1430,7 @@ export default function Home() {
                 <span className="file-icon">CV</span>
                 <span>
                   <strong>
-                    1. 上传真实 CV <em>必填</em>
+                    1. 上传真实 CV <em>与研究兴趣二选一</em>
                   </strong>
                   <small>
                     {uploadState === "uploading"
@@ -1364,7 +1447,7 @@ export default function Home() {
               <div className="application-form">
                 <div className="application-row">
                   <label>
-                    <span>2. 目标学位 <em>必填</em></span>
+                    <span>2. 目标学位 <em>客观筛选前补齐</em></span>
                     <select
                       value={applicationDraft.degree}
                       onChange={(event) =>
@@ -1381,7 +1464,7 @@ export default function Home() {
                     <small>例如：PhD</small>
                   </label>
                   <label>
-                    <span>3. 申请季 <em>必填</em></span>
+                    <span>3. 申请季 <em>客观筛选前补齐</em></span>
                     <input
                       value={applicationDraft.season}
                       onChange={(event) =>
@@ -1406,9 +1489,13 @@ export default function Home() {
                 </label>
                 <div className="interest-editor">
                   <div className="interest-editor-title">
-                    <span>5. 研究兴趣与权重 <em>必填</em></span>
-                    <small className={Math.abs(draftInterestTotal - 100) < 0.01 ? "valid" : ""}>
-                      合计 {draftInterestTotal || 0}% / 100%
+                    <span>5. 研究兴趣与权重 <em>可选</em></span>
+                    <small className={hasDraftInterests ? "valid" : ""}>
+                      {!hasDraftInterests
+                        ? "可留空"
+                        : draftInterestTotal > 0
+                          ? `当前 ${draftInterestTotal}%，保存后归一化`
+                          : "未填权重将自动等权"}
                     </small>
                   </div>
                   {applicationDraft.interests.map((interest, index) => (
@@ -1426,7 +1513,7 @@ export default function Home() {
                           max="100"
                           value={interest.weight}
                           onChange={(event) => updateInterest(index, "weight", event.target.value)}
-                          placeholder="权重"
+                          placeholder="可选"
                           aria-label={`研究兴趣 ${index + 1} 权重`}
                         />
                         <span>%</span>
@@ -1468,23 +1555,43 @@ export default function Home() {
                     + 添加研究兴趣
                   </button>
                 </div>
-                <div className="collection-scope">
-                  <div>
-                    <strong>默认信息收集范围</strong>
-                    <small>取消任一项都可能让导师筛选不完整；客观申请条件会在 shortlist 后自动核实。</small>
-                  </div>
-                  <div className="scope-options">
-                    {finderSectionOptions.map((option) => (
-                      <label key={option.id}>
-                        <input
-                          type="checkbox"
-                          checked={applicationDraft.finderSections.includes(option.id)}
-                          onChange={() => toggleFinderSection(option.id)}
-                        />
-                        <span>{option.label}</span>
-                      </label>
+                <div className="shortlist-field">
+                  <span>6. Phase 1 希望保留的导师数</span>
+                  <div className="shortlist-control">
+                    {[5, 10, 15, 20].map((count) => (
+                      <button
+                        type="button"
+                        className={Number(applicationDraft.shortlistTarget) === count ? "active" : ""}
+                        key={count}
+                        onClick={() => {
+                          setIntakeDirty(true);
+                          setApplicationDraft((current) => ({
+                            ...current,
+                            shortlistTarget: String(count),
+                          }));
+                        }}
+                      >
+                        Top {count}
+                      </button>
                     ))}
+                    <label>
+                      <span>自定义</span>
+                      <input
+                        type="number"
+                        min="5"
+                        max="50"
+                        value={applicationDraft.shortlistTarget}
+                        onChange={(event) => {
+                          setIntakeDirty(true);
+                          setApplicationDraft((current) => ({
+                            ...current,
+                            shortlistTarget: event.target.value,
+                          }));
+                        }}
+                      />
+                    </label>
                   </div>
+                  <small>默认 Top 10；系统会先建立更大的发现池，再筛到这个数量。</small>
                 </div>
                 <button
                   className="save-intake"
@@ -1494,21 +1601,23 @@ export default function Home() {
                 >
                   {intakeSaving
                     ? "正在保存…"
-                    : projectReadiness.ready
+                    : projectReadiness.phase1Ready
                       ? "更新申请资料"
                       : "保存申请资料"}
                 </button>
-                <div className={`intake-status ${projectReadiness.ready ? "complete" : ""}`}>
-                  <span>{projectReadiness.ready ? "✓" : "!"}</span>
+                <div className={`intake-status ${projectReadiness.phase1Ready ? "complete" : ""}`}>
+                  <span>{projectReadiness.phase1Ready ? "✓" : "!"}</span>
                   <p>
                     <strong>
-                      {projectReadiness.ready
-                        ? "资料已齐全，可以开始寻找导师"
-                        : "填写完成后才能启动导师搜索"}
+                      {projectReadiness.phase1Ready
+                        ? "Phase 1 已解锁，可以开始发现导师"
+                        : "还需补齐 Phase 1 的最低输入"}
                     </strong>
                     <small>
-                      {projectReadiness.ready
-                        ? "导师搜索已解锁"
+                      {projectReadiness.phase1Ready
+                        ? projectReadiness.objectiveReady
+                          ? "客观申请条件筛选所需信息也已齐全"
+                          : `可以先进行发现与匹配；客观筛选前还需：${projectReadiness.objectiveMissing.join("、")}`
                         : `还需：${draftMissing.join("、")}`}
                     </small>
                   </p>
@@ -1566,12 +1675,12 @@ export default function Home() {
                           <span>00</span>
                           <strong>还没有真实候选导师</strong>
                           <p>
-                            {projectReadiness.ready
-                              ? "资料已经齐全，现在可以开始寻找导师。"
-                              : "请先上传 CV，并填写申请季、目标范围和研究兴趣。"}
+                            {projectReadiness.phase1Ready
+                              ? "Phase 1 资料已经齐全，现在可以开始寻找导师。"
+                              : "请填写目标范围，并上传 CV 或填写至少一个研究兴趣。"}
                           </p>
                           <button onClick={startPhaseOne}>
-                            {projectReadiness.ready ? "开始寻找导师" : "先完成申请资料"}
+                            {projectReadiness.phase1Ready ? "开始寻找导师" : "先补齐 Phase 1 输入"}
                           </button>
                         </div>
                       </td>
@@ -1693,17 +1802,21 @@ export default function Home() {
                   <span>{selected.size} 位导师</span>
                 </div>
                 <p>
-                  勾选越多，搜索范围和 Token 消耗越高。未勾选的维度会明确写为“用户未选择复核”。
+                  前三项是默认背调起点，可取消但会提示完整性风险；其余维度按需选择。勾选越多，搜索范围和 Token 消耗越高。
                 </p>
                 <div className="detective-options">
                   {detectiveSectionOptions.map((option) => (
-                    <label key={option.id}>
+                    <label
+                      className={option.defaultSelected ? "default-section" : ""}
+                      key={option.id}
+                    >
                       <input
                         type="checkbox"
                         checked={selectedSections.has(option.id)}
                         onChange={() => toggleDetectiveSection(option.id)}
                       />
                       <span>{option.label}</span>
+                      {option.defaultSelected && <b>默认</b>}
                     </label>
                   ))}
                 </div>
@@ -2042,9 +2155,9 @@ export default function Home() {
                 {filePath && <span className="attached-file">CV 已准备</span>}
               </div>
               <ul className="run-summary-list">
-                <li>读取当前项目的 CV 和申请目标</li>
-                <li>查找与你研究方向匹配的真实导师</li>
-                <li>保存候选名单、匹配依据和来源</li>
+                <li>读取当前项目的 CV / 研究兴趣与目标范围</li>
+                <li>建立发现池并筛选到 Top {activeProject?.shortlistTarget || 10}</li>
+                <li>只补齐 shortlist 的客观申请条件，避免重复搜索</li>
               </ul>
               <button
                 className="advanced-toggle"
@@ -2061,12 +2174,16 @@ export default function Home() {
                     aria-label="高级任务指令"
                     value={taskPrompt}
                     onChange={(event) => setTaskPrompt(event.target.value)}
-                    disabled={runState === "running" || runState === "starting"}
+                    disabled={
+                      runState === "running" ||
+                      runState === "starting" ||
+                      runState === "waiting_permission"
+                    }
                   />
                   <small>项目目录：{activeProject?.path || projectsRoot}</small>
                 </div>
               )}
-              {!projectReadiness.ready && (
+              {!projectReadiness.phase1Ready && (
                 <button
                   className="runner-input-blocker"
                   type="button"
@@ -2075,15 +2192,83 @@ export default function Home() {
                     window.setTimeout(focusApplicationInput, 100);
                   }}
                 >
-                  <strong>开始前还缺 {projectReadiness.missing.length} 项申请资料</strong>
+                  <strong>Phase 1 还缺 {projectReadiness.missing.length} 项最低输入</strong>
                   <span>{projectReadiness.missing.join("、")}</span>
                   <b>返回填写 →</b>
                 </button>
               )}
               <p className="safety-note">
-                资料保存在本地；运行时由你选择的模型服务处理本次任务。
+                资料保存在本地；运行时由你选择的模型服务处理。需要命令、文件或网络权限时，任务会暂停并在这里询问。
               </p>
             </section>
+
+            {activePermission && (
+              <section className="runner-section permission-section" aria-live="assertive">
+                <div className="permission-card">
+                  <div className="permission-heading">
+                    <span className={`permission-icon ${activePermission.kind}`}>!</span>
+                    <div>
+                      <small>AGENT 正在等待你的授权</small>
+                      <h3>{activePermission.title}</h3>
+                    </div>
+                  </div>
+                  <div className="permission-meta">
+                    <span>{activePermission.toolName}</span>
+                    <span>
+                      {activePermission.kind === "command"
+                        ? "本地命令"
+                        : activePermission.kind === "network"
+                          ? "网络访问"
+                          : activePermission.kind === "file"
+                            ? "文件修改"
+                            : "工具调用"}
+                    </span>
+                  </div>
+                  {activePermission.description && (
+                    <p>{activePermission.description}</p>
+                  )}
+                  {activePermissionDetail && (
+                    <pre>{activePermissionDetail.slice(0, 1800)}</pre>
+                  )}
+                  {activePermission.cwd && (
+                    <div className="permission-cwd">
+                      <span>工作目录</span>
+                      <code>{activePermission.cwd}</code>
+                    </div>
+                  )}
+                  <div className="permission-actions">
+                    <button
+                      className="permission-deny"
+                      disabled={resolvingPermissionId === activePermission.id}
+                      onClick={() => resolvePermission(activePermission.id, "deny")}
+                    >
+                      拒绝
+                    </button>
+                    <button
+                      disabled={resolvingPermissionId === activePermission.id}
+                      onClick={() => resolvePermission(activePermission.id, "allow_once")}
+                    >
+                      允许一次
+                    </button>
+                    <button
+                      className="permission-session"
+                      disabled={resolvingPermissionId === activePermission.id}
+                      onClick={() => resolvePermission(activePermission.id, "allow_for_run")}
+                    >
+                      本次运行允许
+                    </button>
+                  </div>
+                  <small className="permission-note">
+                    “本次运行允许”只复用同一命令入口或同一网络工具目标；其他操作仍会再次询问。
+                  </small>
+                </div>
+                {pendingPermissions.length > 1 && (
+                  <p className="permission-queue">
+                    后面还有 {pendingPermissions.length - 1} 个授权请求等待处理
+                  </p>
+                )}
+              </section>
+            )}
 
             <section className="runner-section output-section">
               <div className="runner-section-title">
@@ -2095,11 +2280,13 @@ export default function Home() {
                       ? "正在启动"
                       : runState === "running"
                         ? "运行中"
-                        : runState === "completed"
-                          ? "已完成"
-                          : runState === "stopped"
-                            ? "已停止"
-                            : "运行失败"}
+                        : runState === "waiting_permission"
+                          ? "等待授权"
+                          : runState === "completed"
+                            ? "已完成"
+                            : runState === "stopped"
+                              ? "已停止"
+                              : "运行失败"}
                 </span>
               </div>
               <div className={`agent-log ${runEvents.length ? "" : "empty"}`}>
@@ -2130,7 +2317,9 @@ export default function Home() {
             <footer className="runner-footer">
               <span>{currentProviderHealth?.loggedIn ? `将使用 ${provider}` : "请选择可用模型"}</span>
               <div>
-                {(runState === "running" || runState === "starting") && (
+                {(["running", "starting", "waiting_permission"] as RunState[]).includes(
+                  runState,
+                ) && (
                   <button className="stop-button" onClick={stopAgent} disabled={!runId}>
                     停止任务
                   </button>
@@ -2141,15 +2330,18 @@ export default function Home() {
                   disabled={
                     runState === "running" ||
                     runState === "starting" ||
+                    runState === "waiting_permission" ||
                     !currentProviderHealth?.installed ||
                     !currentProviderHealth.loggedIn ||
                     !activeProjectId ||
-                    !projectReadiness.ready ||
+                    !projectReadiness.phase1Ready ||
                     !taskPrompt.trim()
                   }
                 >
-                  {runState === "running" || runState === "starting"
-                    ? "正在寻找导师"
+                  {runState === "waiting_permission"
+                    ? "等待你的授权"
+                    : runState === "running" || runState === "starting"
+                      ? "正在寻找导师"
                     : "开始寻找导师"}
                   <span>→</span>
                 </button>
@@ -2181,11 +2373,11 @@ export default function Home() {
               <ol>
                 <li>
                   <strong>准备申请资料</strong>
-                  <span>上传最新 CV，填写申请季、目标院校范围和研究兴趣权重。</span>
+                  <span>Phase 1 只需目标范围，以及 CV 或研究兴趣；学位和申请季在客观筛选前补齐。</span>
                 </li>
                 <li>
                   <strong>选择模型</strong>
-                  <span>已有 Codex 或 Claude 订阅可直接使用；自定义 API 放在高级选项中。</span>
+                  <span>模型随时可以选择；已有 Codex 或 Claude 订阅可直接使用，自定义 API 放在高级选项中。</span>
                 </li>
                 <li>
                   <strong>开始寻找导师</strong>
@@ -2198,7 +2390,7 @@ export default function Home() {
               </ol>
               <div className="help-note">
                 <strong>运行前需要知道</strong>
-                <p>任务需要联网，耗时取决于搜索范围。使用自定义 API 时可能产生服务商费用。</p>
+                <p>任务需要联网，耗时与 Top N 和背调维度有关。Agent 请求命令、文件或网络权限时，网页会暂停并让你决定。</p>
               </div>
             </div>
             <footer>
@@ -2206,11 +2398,11 @@ export default function Home() {
                 className="primary-button"
                 onClick={() => {
                   setHelpOpen(false);
-                  if (projectReadiness.ready) startPhaseOne();
+                  if (projectReadiness.phase1Ready) startPhaseOne();
                   else window.setTimeout(focusApplicationInput, 100);
                 }}
               >
-                {projectReadiness.ready ? "开始寻找导师" : "去填写申请资料"}
+                {projectReadiness.phase1Ready ? "开始寻找导师" : "去补齐 Phase 1 输入"}
               </button>
             </footer>
           </section>

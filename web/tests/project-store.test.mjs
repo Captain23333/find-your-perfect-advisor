@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import {
-  DEFAULT_FINDER_SECTIONS,
+  DEFAULT_DETECTIVE_SECTIONS,
   createProjectStore,
 } from "../local-runtime/project-store.mjs";
 
@@ -26,13 +26,19 @@ test("project store persists exact investigation configuration", async () => {
 
     const store = createProjectStore(root);
     const project = await store.createProject({ name: "Test", slug: "test-project" });
-    assert.deepEqual(project.investigation.finderSections, DEFAULT_FINDER_SECTIONS);
+    assert.deepEqual(
+      project.investigation.selectedSections,
+      DEFAULT_DETECTIVE_SECTIONS,
+    );
     assert.deepEqual(project.investigation.selectedAdvisorProgramIds, []);
-    assert.equal(project.status.schemaVersion, 2);
+    assert.equal(project.schemaVersion, 3);
+    assert.equal(project.readiness.phase1Ready, false);
 
     const updated = await store.updateProject("test-project", {
+      target: "US HCI programs",
+      shortlistTarget: 15,
+      interests: [{ name: "Human-AI Interaction", weight: 0 }],
       investigation: {
-        finderSections: ["recent_research"],
         selectedAdvisorProgramIds: ["advisor-program-1"],
         selectedSections: ["guidance_group_ecology"],
         communitySources: { consented: true, refreshRequested: true },
@@ -45,6 +51,10 @@ test("project store persists exact investigation configuration", async () => {
       "guidance_group_ecology",
     ]);
     assert.equal(updated.investigation.communitySources.consented, true);
+    assert.equal(updated.shortlistTarget, 15);
+    assert.equal(updated.interests[0].weight, 100);
+    assert.equal(updated.readiness.phase1Ready, true);
+    assert.equal(updated.readiness.objectiveReady, false);
 
     await assert.rejects(
       readFile(
