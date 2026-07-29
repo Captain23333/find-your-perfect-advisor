@@ -135,7 +135,8 @@ Phase 2 入口：
 1. 读取 `ADVISOR_STATE.md` 中的 Scores 表，按加权总分降序取 Top N（默认 10）
 2. 提取：导师名、院校、研究方向、主页URL、Scholar URL、匹配分、招生状态
 3. 将列表传递给 advisor-detective 技能作为调查对象
-4. 展示 advisor-detective 的启动确认提示
+4. 按 advisor-detective 的本地社区知识库规则检查快照时效性；快照缺失或超过 24 小时时先运行同步脚本
+5. 展示 advisor-detective 的启动确认提示
 
 Phase 2 完成信号：`DETECTIVE_STATE.md` 所有导师状态为"完成"，`advisor_detective_*.xlsx` 已生成。
 
