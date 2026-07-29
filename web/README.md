@@ -4,7 +4,9 @@
 
 - 多个申请项目的独立目录、状态和运行记录
 - Codex 订阅、Claude 订阅与自定义 Responses API 三种执行方式
-- CV 上传、三阶段工作流、候选导师和背调状态
+- CV 上传、递进式三阶段工作流、客观申请筛选、候选导师和背调状态
+- 精确导师—项目选择和勾选式调查维度
+- 显式授权、刷新和清除的本地社区资料缓存
 - 从网页启动、停止并实时查看本地 Agent 事件流
 - 不经过网页、直接从终端调用同一套后端
 
@@ -35,6 +37,7 @@ projects/
     ├── status.json
     ├── inputs/
     ├── outputs/
+    ├── community-cache/
     ├── runs/
     ├── .agents/skills/
     └── .claude/skills/
@@ -43,14 +46,24 @@ projects/
 网页创建项目时只需填写一个容易辨认的项目名称；文件夹 ID 由后端自动生成。终端用户仍可按需传入 `--slug` 指定 ID。
 
 - `inputs/`：CV 和用户输入
-- `outputs/`：最终表格与报告；`candidates.json` 是前端候选表的数据源
+- `outputs/`：最终表格与报告；包含 `candidates.json`、`advisor_records.json`、`program_records.json` 和 `evidence.json`
+- `community-cache/`：仅在用户明确同意后生成的第三方社区资料及可搜索文本
 - `runs/<run-id>/`：每次运行的事件和元数据
 - `.agents/skills/`：Codex 的项目级 Skills
 - `.claude/skills/`：Claude Code 的项目级 Skills
 
 网页和终端后端使用同一个项目目录。`projects/` 和运行配置目录 `.advisor-atlas/` 均已加入 Git 忽略列表，避免把个人申请材料误提交到仓库。
 
-每次运行阶段完成后会更新项目根目录的 `status.json`；导师搜索还会更新 `outputs/candidates.json`。网页在运行结束后重新读取这两个文件，所以通过终端执行得到的结果也能显示到前端。
+每次运行阶段完成后会更新项目根目录的 `status.json`。Finder 会更新候选、导师、项目和证据记录；网页在运行结束后重新读取这些文件。候选行使用稳定的 `advisorProgramId`，同名导师或多项目不会仅靠姓名对齐。
+
+## 调查范围与社区资料
+
+- Finder 默认收集基础身份、最近三年研究和近期项目/招生状态；取消默认项时页面会警告信息可能不完整。
+- 对 shortlist 自动补齐客观申请条件，然后用户再选择值得背调的导师—项目组合。
+- Detective 不再使用 shallow、medium、high，而是保存精确 `selectedSections`。
+- 社区资料不会静默下载。只有用户勾选同意并主动开始相关调查或点击刷新后，本地后端才会下载和解析。
+- PDF 由本地 Node 后端生成可搜索文本；失败时缓存状态为“不可搜索”，Agent 不得据此得出“未发现记录”。
+- 页面提供清除本地资料按钮。
 
 ## 使用前提
 

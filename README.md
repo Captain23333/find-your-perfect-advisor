@@ -68,8 +68,9 @@ npm run dev
 4. 填写申请季和目标院校或地区范围。
 5. 填写研究兴趣，并让权重合计为 100%。
 6. 保存申请资料。
-7. 选择本机已登录的 Codex 或 Claude Code。
-8. 点击“开始寻找导师”。
+7. 保留或调整默认信息收集范围。
+8. 选择本机已登录的 Codex 或 Claude Code。
+9. 点击“开始寻找导师”。
 
 五项申请资料未完成前，网页和后端都会阻止导师搜索。候选导师、背调证据和最终排名在任务真正开始前均为 `0`，不会显示演示结果。
 
@@ -95,7 +96,11 @@ projects/
     ├── inputs/
     │   └── <上传的 CV>
     ├── outputs/
-    │   └── candidates.json
+    │   ├── candidates.json
+    │   ├── advisor_records.json
+    │   ├── program_records.json
+    │   └── evidence.json
+    ├── community-cache/       # 仅在明确同意后生成
     ├── runs/
     │   └── <run-id>/
     ├── .agents/
@@ -106,10 +111,11 @@ projects/
 
 网页创建项目时只需填写项目名称，后端会自动生成文件夹 ID。不同申请项目不会共用 CV、状态或运行记录。
 
-- `project.json`：申请季、目标范围和研究兴趣
+- `project.json`：申请季、目标范围、研究兴趣、精确导师选择和调查维度
 - `status.json`：当前工作流阶段和结果数量
 - `inputs/`：上传的 CV
 - `outputs/`：候选名单、工作簿和报告
+- `community-cache/`：用户明确同意后下载的本地第三方社区资料，可在页面中清除
 - `runs/`：每次执行的元数据与事件
 - `.agents/skills/`：Codex 项目级 Skills
 - `.claude/skills/`：Claude Code 项目级 Skills
@@ -273,32 +279,36 @@ my-advisor-application/
 
 通常选择一种方式作为项目的主入口：选择 Web 时由 Web 管理 `projects/`；选择直接使用 Skills 时，在你自己创建的项目文件夹中完成全部工作。
 
-## 三阶段工作流
+## 递进式三阶段工作流
 
-### 阶段 1：候选导师发现
+### 阶段 1：导师发现、研究匹配与客观申请筛选
 
 `advisor-finder` 根据 CV、目标范围与研究兴趣：
 
 - 构建目标院校或院系的导师名册
 - 核对研究方向与近期工作
-- 检查公开招生信号
+- 将导师映射到真实学校、项目、学位和申请季
+- 对研究匹配后的 shortlist 补齐截止日期、学费、奖学金、材料、RP 和联系要求
+- 单独给出客观申请可行性，不把 QS、费用或截止日期混入研究匹配分
 - 记录来源并生成匹配结果
 
-### 阶段 2：背景调查
+Finder 浏览导师或项目页面时已经发现的信息会立即保存；后续只查询缺失、过期或冲突字段。同一项目的信息只查一次，再关联到多位导师。
+
+### 阶段 2：按勾选维度背景调查
 
 `advisor-detective` 对选中的导师继续调查：
 
-- 近期论文主线与研究方向变化
-- 实验室主页、项目和公开动态
-- 学生评价与风险信号
-- 可核验的数据来源
-- 与申请者背景相关的套磁切入点
+- 研究产出与趋势
+- 课题组成员及去向
+- 指导环境、组内生态与工作方式
+- 资源、funding、署名和职业支持
+- 学术诚信、公开争议、国际学生支持及合作网络
 
-没有公开证据时应明确标记信息不足，不使用猜测补全。
+不再使用 `shallow / medium / high`。用户勾选什么就调查什么；未选维度写“用户未选择复核”。如果选择导师风评，可明确同意在当前项目本地下载社区资料。系统优先检索本地文本，再继续核查小红书、X/Twitter、Reddit 等相关来源。匿名内容只作为线索，不能直接改分。
 
 ### 阶段 3：最终排名
 
-`advisor-evaluator` 汇总研究匹配、学术实力、发展潜力、公开评价和证据完整度，生成综合判断与决策建议。
+`advisor-evaluator` 分开汇总研究匹配、客观申请可行性和所选背调维度，生成申请就绪总表。
 
 评分用于辅助筛选，不替代申请者对导师风格、招生状态和合作方式的独立判断。
 
@@ -306,9 +316,9 @@ my-advisor-application/
 
 | Skill | 作用 |
 |---|---|
-| `advisor-finder` | 发现真实候选导师并完成匹配 |
-| `advisor-detective` | 对重点导师进行证据化背景调查 |
-| `advisor-evaluator` | 汇总证据并生成最终排名 |
+| `advisor-finder` | 发现真实候选、完成研究匹配和客观申请筛选 |
+| `advisor-detective` | 按用户勾选维度对重点导师进行证据化背景调查 |
+| `advisor-evaluator` | 分开汇总主客观结论并生成申请就绪总表 |
 | `advisor-pipeline` | 编排完整三阶段流程 |
 
 Skills 源文件位于：
@@ -330,11 +340,22 @@ skills/
 - `EVALUATOR_STATE.md`
 - `advisor_shortlist_<日期>.xlsx`
 - `advisor_detective_<日期>.xlsx`
-- `advisor_final_ranking_<日期>.xlsx`
+- `advisor_application_ready_<日期>.xlsx`
 - `outputs/candidates.json`（Web 模式）
+- `outputs/advisor_records.json`
+- `outputs/program_records.json`
+- `outputs/evidence.json`
 - `runs/<run-id>/events.ndjson`（Web 模式）
 
 具体结果取决于使用的 Skill、搜索范围和模型是否完成了对应任务。
+
+### 社区资料隐私与版权边界
+
+- 公开仓库只保存来源链接、同步机制、证据规则和隐私规则，不保存下载快照。
+- 公开可访问不等于获得再分发授权。
+- 快照仅在用户明确同意后保存到当前申请项目本地，并可从页面清除。
+- PDF 没有成功生成可搜索文本时，必须标记“未完成检索”，不能写“未发现记录”。
+- 镜像、转载和同源引用不算多个独立证据。
 
 ## 常见问题
 
