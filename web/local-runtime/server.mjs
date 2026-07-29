@@ -7,6 +7,11 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createProjectStore } from "./project-store.mjs";
+import {
+  clearCommunityCache,
+  getCommunityCacheStatus,
+  syncCommunityCache,
+} from "./community-cache.mjs";
 
 const runtimeDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(runtimeDirectory, "../..");
@@ -477,13 +482,16 @@ async function startRun(request, response, origin) {
 3. 本次运行的专属输出目录为：${runDirectory}
 4. 共享状态文件写入申请项目目录，最终表格和报告写入 ${resolve(project.path, "outputs")}，本次临时记录写入运行目录。
 5. 不得编造 CV、导师、招生状态或申请者经历；缺少必要输入时明确列出缺失项并停止等待。
-6. 每完成一个阶段，都要把真实进度同步到 ${resolve(project.path, "status.json")}。保留 JSON 格式，并只使用这组字段：
-   {"phase":"intake|finder|detective|evaluator|completed","candidateCount":0,"highMatchCount":0,"evidenceCount":0,"evidenceCoverage":0,"rankingCount":0,"updatedAt":"ISO-8601 时间"}
+6. 每完成一个阶段，都要把真实进度同步到 ${resolve(project.path, "status.json")}。保留 JSON 格式，并使用：
+   {"schemaVersion":2,"phase":"intake|finder|detective|evaluator|completed","stage":"intake|discovery|research_fit|objective_screen|selection|investigation|ranking|completed","candidateCount":0,"shortlistCount":0,"objectiveReadyCount":0,"selectedCount":0,"evidenceCount":0,"evidenceCoverage":0,"rankingCount":0,"updatedAt":"ISO-8601 时间"}
    数字必须来自该项目实际产物；尚未产生的结果保持 0，不能用界面演示数字填充。
-7. Phase 1 产生候选后，同步写入 ${resolve(project.path, "outputs", "candidates.json")}。该文件是 JSON 数组，每项只使用：
-   {"rank":1,"initials":"AB","name":"真实姓名","school":"真实院校","fit":0.0,"status":"已核实状态或待核实","statusTone":"open|caution|unknown","directions":["方向"],"evidence":0}
+7. Phase 1 产生候选并完成客观筛选后，同步写入 ${resolve(project.path, "outputs", "candidates.json")}。每项至少使用：
+   {"advisorProgramId":"稳定ID","rank":1,"initials":"AB","name":"真实姓名","school":"真实院校","program":"真实项目","fit":0.0,"status":"已核实状态或待核实","statusTone":"open|caution|closed|unknown","feasibility":"eligible|ineligible|needs_confirmation","feasibilityReasons":[],"directions":["方向"],"evidence":0}
    每项必须可追溯到真实检索结果；不确定字段要标为待核实，不能补写演示人物。
-8. 不要执行 git commit、git push、发布、发送邮件或任何对外提交操作。`;
+8. 本次项目保存的调查配置为：${JSON.stringify(project.investigation || {}, null, 2)}
+   必须使用其中精确的 selectedAdvisorProgramIds 和 selectedSections，不能只按人数或 Top N 猜测。
+9. Web 社区资料缓存目录为：${resolve(project.path, "community-cache")}。只有 communitySources.consented 为 true 且相关维度被选中时才可读取；searchReady 不为 true 时必须写“未完成检索”。
+10. 不要执行 git commit、git push、发布、发送邮件或任何对外提交操作。`;
 
   const command =
     provider === "codex"
@@ -721,6 +729,45 @@ const server = createServer(async (request, response) => {
         response,
         200,
         { project: await projectStore.updateProject(projectMatch[1], body) },
+        origin,
+      );
+      return;
+    }
+
+    const communityMatch = requestUrl.pathname.match(
+      /^\/api\/projects\/([^/]+)\/community-cache$/,
+    );
+    if (request.method === "GET" && communityMatch) {
+      const project = await projectStore.getProject(communityMatch[1]);
+      sendJson(
+        response,
+        200,
+        { cache: await getCommunityCacheStatus(project.path) },
+        origin,
+      );
+      return;
+    }
+    if (request.method === "POST" && communityMatch) {
+      const project = await projectStore.getProject(communityMatch[1]);
+      if (!project.investigation?.communitySources?.consented) {
+        sendJson(
+          response,
+          403,
+          { error: "请先明确同意在本地下载第三方社区资料" },
+          origin,
+        );
+        return;
+      }
+      const cache = await syncCommunityCache(project.path);
+      sendJson(response, cache.searchReady ? 200 : 422, { cache }, origin);
+      return;
+    }
+    if (request.method === "DELETE" && communityMatch) {
+      const project = await projectStore.getProject(communityMatch[1]);
+      sendJson(
+        response,
+        200,
+        { cache: await clearCommunityCache(project.path) },
         origin,
       );
       return;

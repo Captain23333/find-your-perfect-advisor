@@ -33,6 +33,11 @@ test("server-renders the advisor console", async () => {
   assert.match(html, /优先候选导师/);
   assert.match(html, /本地项目 · 文件本地保存/);
   assert.match(html, /完成申请资料 0\/5/);
+  assert.match(html, /默认信息收集范围/);
+  assert.match(html, /选择需要调查的信息/);
+  assert.match(html, /导师社区资料/);
+  assert.match(html, /客观申请可行性/);
+  assert.doesNotMatch(html, /SHALLOW|MEDIUM|HIGH/);
   assert.doesNotMatch(html, /codex-preview/);
   assert.doesNotMatch(html, /react-loading-skeleton/);
 });

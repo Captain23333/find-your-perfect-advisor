@@ -27,9 +27,13 @@ type RuntimeHealth = {
 };
 
 type ProjectStatus = {
+  schemaVersion: number;
   phase: "intake" | "finder" | "detective" | "evaluator" | "completed";
+  stage: string;
   candidateCount: number;
-  highMatchCount: number;
+  shortlistCount: number;
+  objectiveReadyCount: number;
+  selectedCount: number;
   evidenceCount: number;
   evidenceCoverage: number;
   rankingCount: number;
@@ -46,6 +50,7 @@ type ProjectReadiness = {
 };
 
 type AdvisorProject = {
+  schemaVersion: number;
   id: string;
   slug: string;
   name: string;
@@ -57,6 +62,16 @@ type AdvisorProject = {
   path: string;
   status: ProjectStatus;
   candidates: AdvisorCandidate[];
+  investigation: {
+    finderSections: string[];
+    selectedAdvisorProgramIds: string[];
+    selectedSections: string[];
+    communitySources: {
+      consented: boolean;
+      refreshRequested: boolean;
+      consentedAt: string | null;
+    };
+  };
   cv: {
     name: string;
     path: string;
@@ -68,13 +83,17 @@ type AdvisorProject = {
 };
 
 type AdvisorCandidate = {
+  advisorProgramId: string;
   rank: number;
   initials: string;
   name: string;
   school: string;
+  program: string;
   fit: number;
   status: string;
   statusTone: string;
+  feasibility: "eligible" | "ineligible" | "needs_confirmation";
+  feasibilityReasons: string[];
   directions: string[];
   evidence: number;
 };
@@ -94,6 +113,30 @@ const providerKey: Record<Provider, keyof RuntimeHealth["providers"]> = {
   Codex: "codex",
   "Claude Code": "claude",
   "Custom API": "custom",
+};
+
+const finderSectionOptions = [
+  { id: "identity_current_role", label: "基础身份与当前职位" },
+  { id: "recent_research", label: "最近三年研究兴趣与方向" },
+  { id: "current_projects_recruiting", label: "近期项目与招生状态" },
+];
+
+const detectiveSectionOptions = [
+  { id: "research_output_trend", label: "研究产出与趋势" },
+  { id: "group_members_outcomes", label: "课题组成员及去向" },
+  { id: "guidance_group_ecology", label: "指导环境与组内生态" },
+  { id: "work_style_pressure", label: "工作方式与压力" },
+  { id: "resources_career_support", label: "资源、funding、署名与职业支持" },
+  { id: "integrity_public_controversies", label: "学术诚信与公开争议" },
+  { id: "international_student_support", label: "国际学生支持" },
+  { id: "collaboration_industry_network", label: "合作者、产业和职业网络" },
+];
+
+type CommunityCacheStatus = {
+  state: "missing" | "ready" | "unsearchable" | "refreshing";
+  fetchedAt: string | null;
+  searchReady: boolean;
+  error: string | null;
 };
 
 const defaultTask = `请完整读取 skills/advisor-pipeline/SKILL.md，并从 Phase 1 开始导师匹配。
@@ -141,11 +184,13 @@ export default function Home() {
     degree: string;
     target: string;
     interests: Array<{ name: string; weight: string }>;
+    finderSections: string[];
   }>({
     season: "",
     degree: "",
     target: "",
     interests: [{ name: "", weight: "" }],
+    finderSections: finderSectionOptions.map((item) => item.id),
   });
   const [intakeSaving, setIntakeSaving] = useState(false);
   const [intakeDirty, setIntakeDirty] = useState(false);
@@ -171,6 +216,17 @@ export default function Home() {
   const intakeRef = useRef<HTMLElement | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [selectedSections, setSelectedSections] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [communityConsent, setCommunityConsent] = useState(false);
+  const [investigationSaving, setInvestigationSaving] = useState(false);
+  const [communityCache, setCommunityCache] = useState<CommunityCacheStatus>({
+    state: "missing",
+    fetchedAt: null,
+    searchReady: false,
+    error: null,
+  });
 
   async function refreshProjects(preferredId?: string) {
     try {
@@ -244,11 +300,18 @@ export default function Home() {
   }, [runEvents]);
 
   const activeProject = projects.find((item) => item.id === activeProjectId) || null;
-  const candidates = activeProject?.candidates || [];
+  const candidates = useMemo(
+    () => activeProject?.candidates || [],
+    [activeProject?.candidates],
+  );
   const projectStatus: ProjectStatus = activeProject?.status || {
+    schemaVersion: 2,
     phase: "intake",
+    stage: "intake",
     candidateCount: 0,
-    highMatchCount: 0,
+    shortlistCount: 0,
+    objectiveReadyCount: 0,
+    selectedCount: 0,
     evidenceCount: 0,
     evidenceCoverage: 0,
     rankingCount: 0,
@@ -297,12 +360,43 @@ export default function Home() {
             weight: String(interest.weight),
           }))
         : [{ name: "", weight: "" }],
+      finderSections:
+        activeProject.investigation?.finderSections ||
+        finderSectionOptions.map((item) => item.id),
     });
+    setSelected(
+      new Set(activeProject.investigation?.selectedAdvisorProgramIds || []),
+    );
+    setSelectedSections(
+      new Set(activeProject.investigation?.selectedSections || []),
+    );
+    setCommunityConsent(
+      Boolean(activeProject.investigation?.communitySources?.consented),
+    );
     setFileName(activeProject.cv?.name || "尚未上传真实 CV");
     setFilePath(activeProject.cv?.path || "");
     setUploadState(activeProject.cv?.path ? "ready" : "idle");
     setIntakeDirty(false);
-  }, [activeProjectId, activeProject?.updatedAt]);
+  }, [activeProjectId, activeProject]);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    fetch(`${runtimeUrl}/api/projects/${activeProjectId}/community-cache`, {
+      cache: "no-store",
+    })
+      .then((response) => response.json())
+      .then((payload) => {
+        if (payload.cache) setCommunityCache(payload.cache);
+      })
+      .catch(() => {
+        setCommunityCache({
+          state: "missing",
+          fetchedAt: null,
+          searchReady: false,
+          error: "无法读取本地社区资料状态",
+        });
+      });
+  }, [activeProjectId]);
   const steps = [
     {
       number: "01",
@@ -341,7 +435,7 @@ export default function Home() {
     {
       number: "03",
       title: "综合评分与决策",
-      detail: "透明权重、风险提示与个性化套磁切入点",
+      detail: "研究匹配、客观可行性、风险提示与申请准备信息",
       meta: projectStatus.rankingCount > 0 ? `已生成 ${projectStatus.rankingCount} 位排名` : "尚未开始",
       state:
         projectStatus.phase === "evaluator"
@@ -355,18 +449,54 @@ export default function Home() {
   const filtered = useMemo(
     () =>
       candidates.filter((candidate) =>
-        `${candidate.name} ${candidate.school} ${candidate.directions.join(" ")}`
+        `${candidate.name} ${candidate.school} ${candidate.program} ${candidate.directions.join(" ")}`
           .toLowerCase()
           .includes(query.toLowerCase()) && (!highFitOnly || candidate.fit >= 8),
       ),
     [candidates, highFitOnly, query],
   );
 
-  function toggleCandidate(name: string) {
+  function toggleCandidate(advisorProgramId: string) {
     setSelected((current) => {
       const next = new Set(current);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
+      if (next.has(advisorProgramId)) next.delete(advisorProgramId);
+      else next.add(advisorProgramId);
+      void saveInvestigationConfiguration(
+        false,
+        { selectedAdvisorProgramIds: [...next] },
+        false,
+      ).catch(() => showNotice("导师选择暂时未能保存，请重试"));
+      return next;
+    });
+  }
+
+  function toggleFinderSection(sectionId: string) {
+    const selectedNow = applicationDraft.finderSections.includes(sectionId);
+    if (
+      selectedNow &&
+      !window.confirm("取消这项可能导致导师筛选信息不完整或过时，仍要取消吗？")
+    ) {
+      return;
+    }
+    setIntakeDirty(true);
+    setApplicationDraft((current) => ({
+      ...current,
+      finderSections: selectedNow
+        ? current.finderSections.filter((item) => item !== sectionId)
+        : [...current.finderSections, sectionId],
+    }));
+  }
+
+  function toggleDetectiveSection(sectionId: string) {
+    setSelectedSections((current) => {
+      const next = new Set(current);
+      if (next.has(sectionId)) next.delete(sectionId);
+      else next.add(sectionId);
+      void saveInvestigationConfiguration(
+        false,
+        { selectedSections: [...next] },
+        false,
+      ).catch(() => showNotice("调查维度暂时未能保存，请重试"));
       return next;
     });
   }
@@ -376,13 +506,27 @@ export default function Home() {
       showNotice("还没有候选导师可以导出");
       return;
     }
-    const header = ["排名", "导师", "院校", "研究方向", "招生状态", "证据数", "匹配分"];
+    const header = [
+      "排名",
+      "导师",
+      "院校",
+      "项目",
+      "研究方向",
+      "招生状态",
+      "客观可行性",
+      "客观条件说明",
+      "证据数",
+      "匹配分",
+    ];
     const rows = candidates.map((candidate) => [
       candidate.rank,
       candidate.name,
       candidate.school,
+      candidate.program,
       candidate.directions.join(" / "),
       candidate.status,
+      candidate.feasibility,
+      candidate.feasibilityReasons.join("；"),
       candidate.evidence,
       candidate.fit,
     ]);
@@ -500,6 +644,10 @@ export default function Home() {
             name: interest.name,
             weight: Number(interest.weight),
           })),
+          investigation: {
+            ...activeProject?.investigation,
+            finderSections: applicationDraft.finderSections,
+          },
         }),
       });
       const payload = await response.json();
@@ -653,17 +801,125 @@ export default function Home() {
     setRunState("stopped");
   }
 
-  function startInvestigation() {
+  async function saveInvestigationConfiguration(
+    refreshRequested = false,
+    overrides: {
+      selectedAdvisorProgramIds?: string[];
+      selectedSections?: string[];
+      communityConsent?: boolean;
+    } = {},
+    refresh = true,
+  ) {
+    if (!activeProjectId) throw new Error("请先选择申请项目");
+    const response = await fetch(`${runtimeUrl}/api/projects/${activeProjectId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        investigation: {
+          finderSections:
+            activeProject?.investigation?.finderSections ||
+            finderSectionOptions.map((item) => item.id),
+          selectedAdvisorProgramIds:
+            overrides.selectedAdvisorProgramIds || [...selected],
+          selectedSections: overrides.selectedSections || [...selectedSections],
+          communitySources: {
+            consented: overrides.communityConsent ?? communityConsent,
+            refreshRequested,
+            consentedAt:
+              (overrides.communityConsent ?? communityConsent)
+                ? new Date().toISOString()
+                : null,
+          },
+        },
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "背调配置保存失败");
+    if (refresh) await refreshProjects(activeProjectId);
+    return payload.project;
+  }
+
+  async function refreshCommunityKnowledge() {
+    if (!activeProjectId) return;
+    if (!communityConsent) {
+      showNotice("请先勾选同意在本地下载第三方社区资料");
+      return;
+    }
+    setCommunityCache((current) => ({ ...current, state: "refreshing" }));
+    try {
+      await saveInvestigationConfiguration(true);
+      const response = await fetch(
+        `${runtimeUrl}/api/projects/${activeProjectId}/community-cache`,
+        { method: "POST" },
+      );
+      const payload = await response.json();
+      if (payload.cache) setCommunityCache(payload.cache);
+      if (!response.ok) {
+        throw new Error(payload.error || payload.cache?.error || "社区资料刷新失败");
+      }
+      showNotice("社区资料已在当前申请项目中刷新并生成可搜索文本");
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "社区资料刷新失败");
+    }
+  }
+
+  async function clearCommunityKnowledge() {
+    if (!activeProjectId) return;
+    const response = await fetch(
+      `${runtimeUrl}/api/projects/${activeProjectId}/community-cache`,
+      { method: "DELETE" },
+    );
+    const payload = await response.json();
+    if (!response.ok) {
+      showNotice(payload.error || "本地社区资料清除失败");
+      return;
+    }
+    setCommunityCache({
+      state: "missing",
+      fetchedAt: null,
+      searchReady: false,
+      error: null,
+    });
+    showNotice("当前项目的本地社区资料已清除");
+  }
+
+  async function startInvestigation() {
     if (projectStatus.candidateCount === 0) {
       showNotice("还没有候选导师，请先完成导师搜索");
       return;
     }
-    openRunner(`请完整读取 skills/advisor-detective/SKILL.md，准备开始 Phase 2 深度背调。
+    if (selected.size === 0) {
+      showNotice("请先选择需要调查的导师与项目");
+      return;
+    }
+    if (selectedSections.size === 0) {
+      showNotice("请至少选择一个背调维度");
+      return;
+    }
+    setInvestigationSaving(true);
+    try {
+      await saveInvestigationConfiguration(false);
+      const communitySelected = [
+        "guidance_group_ecology",
+        "work_style_pressure",
+        "resources_career_support",
+      ].some((section) => selectedSections.has(section));
+      if (communitySelected && communityConsent && !communityCache.searchReady) {
+        await refreshCommunityKnowledge();
+      }
+      openRunner(`请完整读取 skills/advisor-detective/SKILL.md，准备开始 Phase 2 按选择维度背调。
 
 只允许从本地已有的 ADVISOR_STATE.md 或最新 Phase 1 输出中读取真实导师名单。
 如果没有真实的 Phase 1 状态文件，请明确说明并停止；绝对不要使用界面中的演示导师姓名。
-需要背调的人数：${selected.size}。
-在正式搜索前，先按照 skill 展示调查深度、范围与消耗确认。`);
+精确 advisor-program IDs：${JSON.stringify([...selected])}
+精确 selected_sections：${JSON.stringify([...selectedSections])}
+社区资料本地下载授权：${communityConsent ? "已授权" : "未授权"}。
+不得改用 Top N 或只按人数猜测对象；未选择的维度写“用户未选择复核”。`);
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "背调配置保存失败");
+    } finally {
+      setInvestigationSaving(false);
+    }
   }
 
   function startRanking() {
@@ -938,11 +1194,11 @@ export default function Home() {
                 <i className="green-chip">≥ 8.0</i>
               </div>
               <div className="stat-value">
-                {projectStatus.highMatchCount} <small>位</small>
+                {projectStatus.shortlistCount} <small>位</small>
               </div>
               <div className="stat-foot">
                 <span className="positive-text">
-                  {projectStatus.highMatchCount > 0 ? "匹配分 ≥ 8.0" : "等待真实评分"}
+                  {projectStatus.shortlistCount > 0 ? "已进入客观条件筛选" : "等待真实评分"}
                 </span>
               </div>
             </article>
@@ -1212,6 +1468,24 @@ export default function Home() {
                     + 添加研究兴趣
                   </button>
                 </div>
+                <div className="collection-scope">
+                  <div>
+                    <strong>默认信息收集范围</strong>
+                    <small>取消任一项都可能让导师筛选不完整；客观申请条件会在 shortlist 后自动核实。</small>
+                  </div>
+                  <div className="scope-options">
+                    {finderSectionOptions.map((option) => (
+                      <label key={option.id}>
+                        <input
+                          type="checkbox"
+                          checked={applicationDraft.finderSections.includes(option.id)}
+                          onChange={() => toggleFinderSection(option.id)}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
                 <button
                   className="save-intake"
                   type="button"
@@ -1248,7 +1522,7 @@ export default function Home() {
               <div>
                 <span className="section-kicker">SHORTLIST</span>
                 <h2>优先候选导师</h2>
-                <p>基于研究方向、近期论文和招生状态生成的匹配结果</p>
+                <p>先看研究匹配和客观申请可行性，再选择值得深度背调的导师</p>
               </div>
               <div className="candidate-actions">
                 <label className="search-box">
@@ -1276,8 +1550,10 @@ export default function Home() {
                   <tr>
                     <th className="check-cell" />
                     <th>导师</th>
+                    <th>项目</th>
                     <th>研究方向</th>
                     <th>招生状态</th>
+                    <th>客观可行性</th>
                     <th>证据</th>
                     <th>匹配分</th>
                   </tr>
@@ -1285,7 +1561,7 @@ export default function Home() {
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={6}>
+                      <td colSpan={8}>
                         <div className="empty-candidates">
                           <span>00</span>
                           <strong>还没有真实候选导师</strong>
@@ -1302,14 +1578,19 @@ export default function Home() {
                     </tr>
                   ) : (
                     filtered.map((candidate) => (
-                      <tr key={candidate.name}>
+                      <tr key={candidate.advisorProgramId}>
                       <td className="check-cell">
                         <input
                           type="checkbox"
                           aria-label={`选择 ${candidate.name}`}
-                          checked={selected.has(candidate.name)}
-                          onChange={() => toggleCandidate(candidate.name)}
+                          checked={selected.has(candidate.advisorProgramId)}
+                          onChange={() => toggleCandidate(candidate.advisorProgramId)}
                         />
+                      </td>
+                      <td>
+                        <span className="program-name">
+                          {candidate.program || "项目待核实"}
+                        </span>
                       </td>
                       <td>
                         <div className="advisor-cell">
@@ -1331,6 +1612,20 @@ export default function Home() {
                         <span className={`status-badge ${candidate.statusTone}`}>
                           {candidate.status}
                         </span>
+                      </td>
+                      <td>
+                        <span className={`feasibility-badge ${candidate.feasibility}`}>
+                          {candidate.feasibility === "eligible"
+                            ? "符合"
+                            : candidate.feasibility === "ineligible"
+                              ? "不符合"
+                              : "待确认"}
+                        </span>
+                        {candidate.feasibilityReasons.length > 0 && (
+                          <small className="feasibility-reason">
+                            {candidate.feasibilityReasons.join("；")}
+                          </small>
+                        )}
                       </td>
                       <td>
                         <span className="evidence-count">{candidate.evidence} 条</span>
@@ -1382,27 +1677,120 @@ export default function Home() {
               </div>
               <button
                 className="primary-button"
-                disabled={!selected.size}
+                disabled={!selected.size || !selectedSections.size || investigationSaving}
                 onClick={startInvestigation}
               >
-                开始背调
+                {investigationSaving ? "正在保存配置…" : "开始背调"}
               </button>
             </header>
-            <article className="panel honest-empty">
+            <div className="evidence-layout">
+              <article className="panel investigation-config">
+                <div className="config-heading">
+                  <div>
+                    <span className="section-kicker">SELECTED SECTIONS</span>
+                    <h2>选择需要调查的信息</h2>
+                  </div>
+                  <span>{selected.size} 位导师</span>
+                </div>
+                <p>
+                  勾选越多，搜索范围和 Token 消耗越高。未勾选的维度会明确写为“用户未选择复核”。
+                </p>
+                <div className="detective-options">
+                  {detectiveSectionOptions.map((option) => (
+                    <label key={option.id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedSections.has(option.id)}
+                        onChange={() => toggleDetectiveSection(option.id)}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="token-hint">
+                  预计消耗：
+                  <strong>
+                    {selected.size * selectedSections.size > 24
+                      ? "较高"
+                      : selected.size * selectedSections.size > 8
+                        ? "中等"
+                        : "较低"}
+                  </strong>
+                  <span>（按导师数 × 调查维度估算）</span>
+                </div>
+              </article>
+
+              <article className="panel community-config">
+                <div className="config-heading">
+                  <div>
+                    <span className="section-kicker">LOCAL COMMUNITY CACHE</span>
+                    <h2>导师社区资料</h2>
+                  </div>
+                  <span className={`cache-state ${communityCache.state}`}>
+                    {communityCache.state === "ready"
+                      ? "可搜索"
+                      : communityCache.state === "refreshing"
+                        ? "刷新中"
+                        : communityCache.state === "unsearchable"
+                          ? "不可搜索"
+                          : "未下载"}
+                  </span>
+                </div>
+                <p>
+                  仅在当前申请项目本地保存第三方红黑榜快照，不进入 Git。匿名内容只作为线索，还会继续核查其他社区和正式来源。
+                </p>
+                <label className="consent-row">
+                  <input
+                    type="checkbox"
+                    checked={communityConsent}
+                    onChange={(event) => {
+                      const consented = event.target.checked;
+                      setCommunityConsent(consented);
+                      void saveInvestigationConfiguration(
+                        false,
+                        { communityConsent: consented },
+                        false,
+                      ).catch(() => showNotice("社区资料授权状态暂时未能保存"));
+                    }}
+                  />
+                  <span>我同意为本次导师风评调查在本地下载并解析这些第三方资料</span>
+                </label>
+                {communityCache.error && (
+                  <div className="cache-error">{communityCache.error}</div>
+                )}
+                <div className="cache-actions">
+                  <button
+                    className="secondary-button"
+                    disabled={!communityConsent || communityCache.state === "refreshing"}
+                    onClick={refreshCommunityKnowledge}
+                  >
+                    刷新本地资料
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={communityCache.state === "missing"}
+                    onClick={clearCommunityKnowledge}
+                  >
+                    清除本地资料
+                  </button>
+                </div>
+              </article>
+            </div>
+            <article className="panel honest-empty compact-empty">
               <span>{projectStatus.evidenceCount || "00"}</span>
               <h2>
                 {projectStatus.candidateCount === 0
                   ? "先获得候选导师"
                   : selected.size === 0
                     ? "先选择需要调查的导师"
-                    : "尚未开始深度背调"}
+                    : selectedSections.size === 0
+                      ? "请选择至少一个背调维度"
+                      : "背调配置已准备"}
               </h2>
               <p>
-                {projectStatus.candidateCount === 0
-                  ? "完成导师搜索后，候选名单会出现在这里。"
-                  : selected.size === 0
-                    ? "前往候选导师页面勾选重点对象，再开始证据可追溯的背景调查。"
-                    : `已选择 ${selected.size} 位导师，可以开始调查。`}
+                {selected.size > 0 && selectedSections.size > 0
+                  ? `将对 ${selected.size} 个导师—项目组合调查 ${selectedSections.size} 个维度。`
+                  : "前往候选导师页面选择对象，再配置需要调查的信息。"}
               </p>
               <button
                 onClick={() =>

@@ -10,6 +10,31 @@ const defaultProjectInput = {
   interests: [],
 };
 
+export const DEFAULT_FINDER_SECTIONS = [
+  "identity_current_role",
+  "recent_research",
+  "current_projects_recruiting",
+];
+
+export const DETECTIVE_SECTIONS = [
+  "research_output_trend",
+  "group_members_outcomes",
+  "guidance_group_ecology",
+  "work_style_pressure",
+  "resources_career_support",
+  "integrity_public_controversies",
+  "international_student_support",
+  "collaboration_industry_network",
+];
+
+const COMMUNITY_CACHE_FILES = new Set([
+  "community-blacklist-current.pdf",
+  "community-blacklist-current.txt",
+  "community-red-flags-current.txt",
+  "community-knowledge-metadata.json",
+  "community-links.json",
+]);
+
 export function createProjectStore(projectRoot) {
   const projectsRoot = resolve(projectRoot, "projects");
   const sourceSkills = resolve(projectRoot, "skills");
@@ -48,12 +73,24 @@ export function createProjectStore(projectRoot) {
 
   async function readStatus(target) {
     try {
-      return JSON.parse(await readFile(resolve(target, "status.json"), "utf8"));
+      const status = JSON.parse(await readFile(resolve(target, "status.json"), "utf8"));
+      return {
+        schemaVersion: 2,
+        stage: status.phase === "intake" ? "intake" : "discovery",
+        shortlistCount: Number(status.highMatchCount || 0),
+        objectiveReadyCount: 0,
+        selectedCount: 0,
+        ...status,
+      };
     } catch {
       return {
+        schemaVersion: 2,
         phase: "intake",
+        stage: "intake",
         candidateCount: 0,
-        highMatchCount: 0,
+        shortlistCount: 0,
+        objectiveReadyCount: 0,
+        selectedCount: 0,
         evidenceCount: 0,
         evidenceCoverage: 0,
         rankingCount: 0,
@@ -67,7 +104,20 @@ export function createProjectStore(projectRoot) {
       const parsed = JSON.parse(
         await readFile(resolve(target, "outputs", "candidates.json"), "utf8"),
       );
-      return Array.isArray(parsed) ? parsed : [];
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((candidate, index) => ({
+        ...candidate,
+        advisorProgramId:
+          String(candidate?.advisorProgramId || "").trim() ||
+          `legacy-${index + 1}-${String(candidate?.name || "advisor")
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")}`,
+        program: String(candidate?.program || ""),
+        feasibility: String(candidate?.feasibility || "needs_confirmation"),
+        feasibilityReasons: Array.isArray(candidate?.feasibilityReasons)
+          ? candidate.feasibilityReasons.map(String)
+          : [],
+      }));
     } catch {
       return [];
     }
@@ -88,6 +138,60 @@ export function createProjectStore(projectRoot) {
         ...interest,
         weight: Math.min(100, Math.round(interest.weight * 10) / 10),
       }));
+  }
+
+  function normalizeSectionList(input, allowed, fallback = []) {
+    if (!Array.isArray(input)) return [...fallback];
+    return [...new Set(input.map(String).filter((item) => allowed.includes(item)))];
+  }
+
+  function normalizeInvestigation(input, existing = {}) {
+    const selectedIds = Array.isArray(input?.selectedAdvisorProgramIds)
+      ? input.selectedAdvisorProgramIds
+      : existing.selectedAdvisorProgramIds;
+    const consented = Boolean(
+      input?.communitySources?.consented ??
+        existing.communitySources?.consented ??
+        false,
+    );
+    return {
+      finderSections: normalizeSectionList(
+        input?.finderSections ?? existing.finderSections,
+        DEFAULT_FINDER_SECTIONS,
+        DEFAULT_FINDER_SECTIONS,
+      ),
+      selectedAdvisorProgramIds: [
+        ...new Set((selectedIds || []).map(String).filter(Boolean)),
+      ].slice(0, 30),
+      selectedSections: normalizeSectionList(
+        input?.selectedSections ?? existing.selectedSections,
+        DETECTIVE_SECTIONS,
+      ),
+      communitySources: {
+        consented,
+        refreshRequested: Boolean(
+          input?.communitySources?.refreshRequested ??
+            existing.communitySources?.refreshRequested ??
+            false,
+        ),
+        consentedAt: consented
+          ? input?.communitySources?.consentedAt ||
+            existing.communitySources?.consentedAt ||
+            new Date().toISOString()
+          : null,
+      },
+    };
+  }
+
+  function normalizeMetadata(metadata) {
+    return {
+      ...metadata,
+      schemaVersion: 2,
+      investigation: normalizeInvestigation(
+        metadata.investigation,
+        metadata.investigation,
+      ),
+    };
   }
 
   function projectReadiness(metadata) {
@@ -121,7 +225,9 @@ export function createProjectStore(projectRoot) {
 
   async function getProject(slug) {
     const target = projectPath(slug);
-    const metadata = JSON.parse(await readFile(resolve(target, "project.json"), "utf8"));
+    const metadata = normalizeMetadata(
+      JSON.parse(await readFile(resolve(target, "project.json"), "utf8")),
+    );
     return {
       ...metadata,
       path: target,
@@ -165,6 +271,7 @@ export function createProjectStore(projectRoot) {
 
     const now = new Date().toISOString();
     const metadata = {
+      schemaVersion: 2,
       id: slug,
       slug,
       name: String(input.name || slug).trim(),
@@ -173,13 +280,18 @@ export function createProjectStore(projectRoot) {
       target: String(input.target || "").trim(),
       interests: normalizeInterests(input.interests),
       cv: null,
+      investigation: normalizeInvestigation(input.investigation),
       createdAt: now,
       updatedAt: now,
     };
     const status = {
+      schemaVersion: 2,
       phase: "intake",
+      stage: "intake",
       candidateCount: 0,
-      highMatchCount: 0,
+      shortlistCount: 0,
+      objectiveReadyCount: 0,
+      selectedCount: 0,
       evidenceCount: 0,
       evidenceCoverage: 0,
       rankingCount: 0,
@@ -197,16 +309,25 @@ export function createProjectStore(projectRoot) {
       cp(sourceSkills, resolve(target, ".agents", "skills"), {
         recursive: true,
         force: true,
-        filter: (source) => basename(source) !== ".DS_Store",
+        filter: (source) =>
+          basename(source) !== ".DS_Store" &&
+          !COMMUNITY_CACHE_FILES.has(basename(source)) &&
+          !basename(source).endsWith(".tmp"),
       }),
       cp(sourceSkills, resolve(target, ".claude", "skills"), {
         recursive: true,
         force: true,
-        filter: (source) => basename(source) !== ".DS_Store",
+        filter: (source) =>
+          basename(source) !== ".DS_Store" &&
+          !COMMUNITY_CACHE_FILES.has(basename(source)) &&
+          !basename(source).endsWith(".tmp"),
       }),
       writeFile(projectFile, JSON.stringify(metadata, null, 2)),
       writeFile(resolve(target, "status.json"), JSON.stringify(status, null, 2)),
       writeFile(resolve(target, "outputs", "candidates.json"), "[]\n"),
+      writeFile(resolve(target, "outputs", "advisor_records.json"), "[]\n"),
+      writeFile(resolve(target, "outputs", "program_records.json"), "[]\n"),
+      writeFile(resolve(target, "outputs", "evidence.json"), "[]\n"),
       writeFile(
         resolve(target, "README.md"),
         `# ${metadata.name}
@@ -230,7 +351,7 @@ export function createProjectStore(projectRoot) {
   async function updateProject(slug, input) {
     const target = projectPath(slug);
     const projectFile = resolve(target, "project.json");
-    const metadata = JSON.parse(await readFile(projectFile, "utf8"));
+    const metadata = normalizeMetadata(JSON.parse(await readFile(projectFile, "utf8")));
     const updated = {
       ...metadata,
       name:
@@ -253,6 +374,11 @@ export function createProjectStore(projectRoot) {
         input.interests === undefined
           ? metadata.interests
           : normalizeInterests(input.interests),
+      investigation:
+        input.investigation === undefined
+          ? metadata.investigation
+          : normalizeInvestigation(input.investigation, metadata.investigation),
+      schemaVersion: 2,
       updatedAt: new Date().toISOString(),
     };
     if (!updated.name) updated.name = "未命名申请项目";
@@ -263,7 +389,7 @@ export function createProjectStore(projectRoot) {
   async function setProjectCv(slug, cv) {
     const target = projectPath(slug);
     const projectFile = resolve(target, "project.json");
-    const metadata = JSON.parse(await readFile(projectFile, "utf8"));
+    const metadata = normalizeMetadata(JSON.parse(await readFile(projectFile, "utf8")));
     const updated = {
       ...metadata,
       cv: {
