@@ -12,6 +12,8 @@ AI 导师匹配工具：从真实 CV 和申请目标出发，完成候选导师�
 两种方式使用的是同一组导师匹配 Skills。区别只是由 Web 前端驱动，还是直接让 Codex / Claude 在项目文件夹中调用 Skills。
 
 > 第一次使用或准备修改前端时，请先阅读 [Advisor Atlas 前端使用与维护指引](docs/FRONTEND_GUIDE.md)。
+>
+> **当前推荐使用方式：** Web 本地控制台仍在持续迭代，暂时可能存在界面或流程稳定性问题。现阶段更推荐使用 **Codex Desktop** 打开自己的申请项目文件夹，或者在该文件夹中通过 **Codex CLI / Claude Code** 直接调用项目级 Skills；完整结果会保存在项目本地文件夹中。
 
 ```text
 真实 CV + 申请目标
