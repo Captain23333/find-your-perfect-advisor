@@ -367,6 +367,76 @@ function normalizeEvent(provider, line, stream) {
   };
 }
 
+// Collect every descendant of rootPid by walking parent/child links strictly
+// downward. Never traverse toward parents: the user's own terminals live in a
+// different subtree and must stay untouched. Do not replace this with
+// name-based matching (`pkill -f claude`) — that would also kill the user's
+// unrelated CLI sessions.
+async function collectDescendantPids(rootPid) {
+  if (!rootPid || rootPid <= 1) return [];
+  const listing = await execText("ps", ["-A", "-o", "pid=,ppid="], 4000);
+  if (!listing.ok) return [];
+
+  const childrenByParent = new Map();
+  for (const line of listing.stdout.split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/).map(Number);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    if (!childrenByParent.has(ppid)) childrenByParent.set(ppid, []);
+    childrenByParent.get(ppid).push(pid);
+  }
+
+  const descendants = [];
+  const queue = [rootPid];
+  const seen = new Set([rootPid]);
+  while (queue.length > 0) {
+    for (const pid of childrenByParent.get(queue.shift()) || []) {
+      if (seen.has(pid) || pid <= 1 || pid === process.pid) continue;
+      seen.add(pid);
+      descendants.push(pid);
+      queue.push(pid);
+    }
+  }
+  return descendants;
+}
+
+// Replaces the previous `process.kill(-pid)` process-group kill, which required
+// spawning with `detached: true`. That option is rejected with EINVAL on some
+// platforms, so the run is now spawned in the parent's process group and torn
+// down by walking the process tree instead.
+async function killProcessTree(child, signal) {
+  const rootPid = child.pid;
+  if (!rootPid) return;
+
+  if (process.platform === "win32") {
+    if (signal === "SIGKILL") {
+      await execText("taskkill", ["/PID", String(rootPid), "/T", "/F"], 4000);
+    } else {
+      try {
+        child.kill(signal);
+      } catch {
+        // The process has already exited.
+      }
+    }
+    return;
+  }
+
+  // Deepest-first, so a dying parent cannot spawn survivors that escape the
+  // snapshot before we reach them.
+  const descendants = await collectDescendantPids(rootPid);
+  for (const pid of descendants.reverse()) {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // The process has already exited, or its PID was recycled.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // The process has already exited.
+  }
+}
+
 function terminateRun(runId) {
   const run = activeRuns.get(runId);
   if (!run || run.finished) return false;
@@ -380,27 +450,11 @@ function terminateRun(runId) {
   }
   run.permissions?.clear();
 
-  try {
-    if (process.platform !== "win32" && run.child.pid) {
-      process.kill(-run.child.pid, "SIGTERM");
-    } else {
-      run.child.kill("SIGTERM");
-    }
-  } catch {
-    run.child.kill("SIGTERM");
-  }
+  void killProcessTree(run.child, "SIGTERM");
 
   setTimeout(() => {
     if (run.child.exitCode === null) {
-      try {
-        if (process.platform !== "win32" && run.child.pid) {
-          process.kill(-run.child.pid, "SIGKILL");
-        } else {
-          run.child.kill("SIGKILL");
-        }
-      } catch {
-        // The process has already exited.
-      }
+      void killProcessTree(run.child, "SIGKILL");
     }
   }, 2500).unref();
   return true;
@@ -682,7 +736,9 @@ async function startRun(request, response, origin) {
       NO_COLOR: "1",
       FORCE_COLOR: "0",
     },
-    detached: process.platform !== "win32",
+    // Deliberately not `detached: true`: the underlying setsid flag is rejected
+    // with EINVAL on some platforms and aborts the run before the provider ever
+    // starts. Teardown walks the process tree instead — see killProcessTree.
     stdio: ["pipe", "pipe", "pipe"],
   });
 
