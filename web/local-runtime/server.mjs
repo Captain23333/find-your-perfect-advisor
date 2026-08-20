@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { createProjectStore } from "./project-store.mjs";
 import {
+  communityRefreshEligibility,
+} from "../../skills/advisor-pipeline/scripts/project-contract.mjs";
+import {
   claudeControlRequestToPermission,
   claudePermissionResponse,
   createCodexAppServerBridge,
@@ -627,7 +630,7 @@ async function startRun(request, response, origin) {
 7. Phase 1 产生候选并完成客观筛选后，同步写入 ${resolve(project.path, "outputs", "candidates.json")}。每项至少使用：
    {"advisorProgramId":"稳定ID","rank":1,"initials":"AB","name":"真实姓名","school":"真实院校","program":"真实项目","fit":0.0,"status":"已核实状态或待核实","statusTone":"open|caution|closed|unknown","feasibility":"eligible|ineligible|needs_confirmation","feasibilityReasons":[],"directions":["方向"],"evidence":0}
    每项必须可追溯到真实检索结果；不确定字段要标为待核实，不能补写演示人物。
-8. 本次项目保存的调查配置为：${JSON.stringify(project.investigation || {}, null, 2)}
+8. 本次项目最终确认的调查配置为：${JSON.stringify(project.investigation?.confirmed || null, null, 2)}
    必须使用其中精确的 selectedAdvisorProgramIds 和 selectedSections，不能只按人数或 Top N 猜测。
 9. Web 社区资料缓存目录为：${resolve(project.path, "community-cache")}。只有 communitySources.consented 为 true 且相关维度被选中时才可读取；searchReady 不为 true 时必须写“未完成检索”。
 10. Phase 1 目标 shortlist 数量为 ${project.shortlistTarget}。发现池大小必须服从用户范围：如果是一个明确学校、院系、研究所或实验室，覆盖其官方名册中合理相关且具备指导资格的人，不得为了凑数硬扩到 30，通常以约 ${Math.min(
@@ -969,6 +972,24 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const investigationConfirmMatch = requestUrl.pathname.match(
+      /^\/api\/projects\/([^/]+)\/investigation\/confirm$/,
+    );
+    if (request.method === "POST" && investigationConfirmMatch) {
+      const body = await readJson(request);
+      try {
+        const project = await projectStore.confirmInvestigation(
+          investigationConfirmMatch[1],
+          body,
+        );
+        sendJson(response, 200, { project }, origin);
+      } catch (error) {
+        const status = error.code === "STALE_DRAFT" ? 409 : 422;
+        sendJson(response, status, { error: error.message }, origin);
+      }
+      return;
+    }
+
     const communityMatch = requestUrl.pathname.match(
       /^\/api\/projects\/([^/]+)\/community-cache$/,
     );
@@ -984,11 +1005,12 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "POST" && communityMatch) {
       const project = await projectStore.getProject(communityMatch[1]);
-      if (!project.investigation?.communitySources?.consented) {
+      const eligibility = communityRefreshEligibility(project.investigation);
+      if (!eligibility.allowed) {
         sendJson(
           response,
-          403,
-          { error: "请先明确同意在本地下载第三方社区资料" },
+          eligibility.reason?.includes("发生变化") ? 409 : 403,
+          { error: eligibility.reason },
           origin,
         );
         return;

@@ -29,8 +29,44 @@ If the full skill set is present, read
 `references/community-sources.md` only when
 `guidance_group_ecology` or another reputation-related section is selected.
 
-Require exact `selected_advisor_program_ids` and `selected_sections`. Validate
-each ID against the Finder output. A count without exact IDs is invalid.
+Require exact `investigation.confirmed.selectedAdvisorProgramIds` and
+`investigation.confirmed.selectedSections` from `project.json`. The confirmed
+revision and fingerprint must still match the current draft. Validate every ID
+against the Finder output. A draft, count, advisor name alone, or Top N
+instruction is not authorization to research.
+
+## Direct invocation fallback
+
+When the user invokes Advisor Detective directly, do not assume they know the
+internal IDs or section names.
+
+1. If Finder's structured outputs are missing or contain no real candidates,
+   explain that Phase 1 is required and stop. Never substitute example data.
+2. Run `node .agents/skills/advisor-pipeline/scripts/init_project.mjs --root "$PWD"`
+   (or the equivalent `.claude/skills/` path). This initializes or safely
+   migrates the shared schemaVersion 4 contract before selection without
+   discarding or rewriting existing Finder outputs. Do not hand-compose the
+   missing project files.
+3. If the exact advisor or section selection is missing, run the same
+   interactive selection gate defined in Advisor Pipeline:
+   - display numbered real advisor-program rows from `outputs/candidates.json`;
+   - display all 11 ordered section choices from
+     `references/investigation-sections.md`;
+   - preselect only the three documented defaults;
+   - show the Web-equivalent cost level;
+   - ask separately for community-source consent when relevant;
+   - show a final summary and wait for explicit confirmation.
+4. Resolve names or list numbers to stable `advisorProgramId` values. If one
+   name maps to multiple programs, make the user choose the exact program.
+5. After showing the final summary and receiving explicit confirmation, run the
+   bundled `advisor-pipeline/scripts/confirm_investigation.mjs` with
+   `--confirmed-by-user`. Do not hand-edit `confirmed`, and do not treat a
+   partially answered or saved draft menu as authorization.
+
+If a valid non-empty configuration was already persisted and the user's command
+is to run or resume that investigation, show a compact summary and use it. Ask
+again only when the user requests a change or the stored IDs are no longer
+valid.
 
 ## Confirmation gate
 
@@ -38,12 +74,14 @@ Before any network research or community-cache refresh, show:
 
 - Exact selected advisors and programs.
 - Exact selected sections.
-- A qualitative cost warning based on advisor count and sections.
+- The cost level calculated with the canonical Web thresholds.
 - Whether local community sources are requested.
 
-Proceed only after the selection is persisted. Community snapshots additionally
-require `community_sources.consented: true`. If consent is false, continue other
-selected research without downloading them.
+Proceed only after a current confirmation snapshot is persisted. Community
+snapshots additionally require
+`investigation.confirmed.communitySources.consented: true`, a selected
+community-relevant section, and the same current revision/fingerprint. If
+consent is false, continue other selected research without downloading them.
 
 ## Research workflow
 

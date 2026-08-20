@@ -79,13 +79,22 @@ type AdvisorProject = {
   detectiveResults: DetectiveResults | null;
   rankings: AdvisorRanking[];
   investigation: {
-    selectedAdvisorProgramIds: string[];
-    selectedSections: string[];
-    communitySources: {
-      consented: boolean;
-      refreshRequested: boolean;
-      consentedAt: string | null;
+    draft: {
+      selectedAdvisorProgramIds: string[];
+      selectedSections: string[];
+      communitySources: { requested: boolean };
+      revision: number;
+      updatedAt: string;
     };
+    confirmed: {
+      selectedAdvisorProgramIds: string[];
+      selectedSections: string[];
+      communitySources: { consented: boolean; consentedAt: string | null };
+      revision: number;
+      confirmedAt: string;
+      fingerprint: string;
+      source: "user_confirmed" | "legacy_artifact";
+    } | null;
   };
   cv: {
     name: string;
@@ -283,12 +292,14 @@ export default function Home() {
   const runIdRef = useRef("");
   const intakeRef = useRef<HTMLElement | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
+  const investigationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [selectedSections, setSelectedSections] = useState<Set<string>>(
     () => new Set(),
   );
   const [communityConsent, setCommunityConsent] = useState(false);
   const [investigationSaving, setInvestigationSaving] = useState(false);
+  const [investigationConfirmOpen, setInvestigationConfirmOpen] = useState(false);
   const [evidenceConfigOpen, setEvidenceConfigOpen] = useState(true);
   const [communityCache, setCommunityCache] = useState<CommunityCacheStatus>({
     state: "missing",
@@ -458,6 +469,21 @@ export default function Home() {
   const selectedSectionLabels = detectiveSectionOptions
     .filter((option) => selectedSections.has(option.id))
     .map((option) => option.label);
+  const communityRelevant = [
+    "guidance_group_ecology",
+    "work_style_pressure",
+    "resources_career_support",
+  ].some((section) => selectedSections.has(section));
+  const confirmedInvestigation = activeProject?.investigation?.confirmed || null;
+  const confirmedMatchesCurrentDraft = Boolean(
+    confirmedInvestigation &&
+      confirmedInvestigation.selectedAdvisorProgramIds.length === selected.size &&
+      confirmedInvestigation.selectedAdvisorProgramIds.every((id) => selected.has(id)) &&
+      confirmedInvestigation.selectedSections.length === selectedSections.size &&
+      confirmedInvestigation.selectedSections.every((id) => selectedSections.has(id)) &&
+      confirmedInvestigation.communitySources.consented ===
+        (communityRelevant && communityConsent),
+  );
   const runnerContent =
     runnerMode === "detective"
       ? {
@@ -520,19 +546,20 @@ export default function Home() {
         : [{ name: "", weight: "" }],
     });
     setSelected(
-      new Set(activeProject.investigation?.selectedAdvisorProgramIds || []),
+      new Set(activeProject.investigation?.draft?.selectedAdvisorProgramIds || []),
     );
     setSelectedSections(
-      new Set(activeProject.investigation?.selectedSections || []),
+      new Set(activeProject.investigation?.draft?.selectedSections || []),
     );
     setCommunityConsent(
-      Boolean(activeProject.investigation?.communitySources?.consented),
+      Boolean(activeProject.investigation?.draft?.communitySources?.requested),
     );
     setFileName(activeProject.cv?.name || "尚未上传真实 CV");
     setFilePath(activeProject.cv?.path || "");
     setUploadState(activeProject.cv?.path ? "ready" : "idle");
     setIntakeDirty(false);
     setEvidenceConfigOpen(!activeProject.detectiveResults?.results.length);
+    setInvestigationConfirmOpen(false);
   }, [activeProjectId, activeProject]);
 
   useEffect(() => {
@@ -612,12 +639,12 @@ export default function Home() {
   );
 
   function toggleCandidate(advisorProgramId: string) {
+    setInvestigationConfirmOpen(false);
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(advisorProgramId)) next.delete(advisorProgramId);
       else next.add(advisorProgramId);
       void saveInvestigationConfiguration(
-        false,
         { selectedAdvisorProgramIds: [...next] },
         false,
       ).catch(() => showNotice("导师选择暂时未能保存，请重试"));
@@ -626,6 +653,7 @@ export default function Home() {
   }
 
   function toggleDetectiveSection(sectionId: string) {
+    setInvestigationConfirmOpen(false);
     setSelectedSections((current) => {
       const next = new Set(current);
       if (next.has(sectionId)) {
@@ -643,7 +671,6 @@ export default function Home() {
         next.add(sectionId);
       }
       void saveInvestigationConfiguration(
-        false,
         { selectedSections: [...next] },
         false,
       ).catch(() => showNotice("调查维度暂时未能保存，请重试"));
@@ -1048,7 +1075,6 @@ export default function Home() {
   }
 
   async function saveInvestigationConfiguration(
-    refreshRequested = false,
     overrides: {
       selectedAdvisorProgramIds?: string[];
       selectedSections?: string[];
@@ -1057,40 +1083,57 @@ export default function Home() {
     refresh = true,
   ) {
     if (!activeProjectId) throw new Error("请先选择申请项目");
-    const response = await fetch(`${runtimeUrl}/api/projects/${activeProjectId}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        investigation: {
+    const projectId = activeProjectId;
+    const requestBody = {
+      investigation: {
+        draft: {
           selectedAdvisorProgramIds:
             overrides.selectedAdvisorProgramIds || [...selected],
           selectedSections: overrides.selectedSections || [...selectedSections],
           communitySources: {
-            consented: overrides.communityConsent ?? communityConsent,
-            refreshRequested,
-            consentedAt:
-              (overrides.communityConsent ?? communityConsent)
-                ? new Date().toISOString()
-                : null,
+            requested: overrides.communityConsent ?? communityConsent,
           },
         },
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "背调配置保存失败");
-    if (refresh) await refreshProjects(activeProjectId);
-    return payload.project;
+      },
+    };
+    const operation = investigationSaveQueueRef.current
+      .catch(() => {})
+      .then(async () => {
+        const response = await fetch(`${runtimeUrl}/api/projects/${projectId}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "背调配置保存失败");
+        setProjects((current) =>
+          current.map((project) =>
+            project.id === projectId ? payload.project : project,
+          ),
+        );
+        if (refresh) await refreshProjects(projectId);
+        return payload.project as AdvisorProject;
+      });
+    investigationSaveQueueRef.current = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
-  async function refreshCommunityKnowledge() {
+  async function refreshCommunityKnowledge(projectOverride?: AdvisorProject) {
     if (!activeProjectId) return;
-    if (!communityConsent) {
-      showNotice("请先勾选同意在本地下载第三方社区资料");
+    const confirmed = projectOverride?.investigation.confirmed || confirmedInvestigation;
+    if (!confirmed || !confirmed.communitySources.consented) {
+      showNotice("请先最终确认包含社区资料授权的调查配置");
+      return;
+    }
+    if (!projectOverride && !confirmedMatchesCurrentDraft) {
+      showNotice("调查选择已发生变化，请重新确认后再刷新社区资料");
       return;
     }
     setCommunityCache((current) => ({ ...current, state: "refreshing" }));
     try {
-      await saveInvestigationConfiguration(true);
       const response = await fetch(
         `${runtimeUrl}/api/projects/${activeProjectId}/community-cache`,
         { method: "POST" },
@@ -1139,28 +1182,53 @@ export default function Home() {
       showNotice("请至少选择一个背调维度");
       return;
     }
+    setInvestigationConfirmOpen(true);
+  }
+
+  async function confirmAndStartInvestigation() {
+    if (!activeProjectId) return;
     setInvestigationSaving(true);
     try {
-      await saveInvestigationConfiguration(false);
-      const communitySelected = [
-        "guidance_group_ecology",
-        "work_style_pressure",
-        "resources_career_support",
-      ].some((section) => selectedSections.has(section));
-      if (communitySelected && communityConsent && !communityCache.searchReady) {
-        await refreshCommunityKnowledge();
+      const savedProject = await saveInvestigationConfiguration({}, false);
+      const response = await fetch(
+        `${runtimeUrl}/api/projects/${activeProjectId}/investigation/confirm`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            draftRevision: savedProject.investigation.draft.revision,
+          }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "最终确认失败");
+      const confirmedProject = payload.project as AdvisorProject;
+      const confirmed = confirmedProject.investigation.confirmed;
+      if (!confirmed) throw new Error("最终确认快照没有生成");
+      setProjects((current) =>
+        current.map((project) =>
+          project.id === activeProjectId ? confirmedProject : project,
+        ),
+      );
+      if (
+        confirmed.communitySources.consented &&
+        !communityCache.searchReady
+      ) {
+        await refreshCommunityKnowledge(confirmedProject);
       }
+      setInvestigationConfirmOpen(false);
       openRunner(`请完整读取 skills/advisor-detective/SKILL.md，准备开始 Phase 2 按选择维度背调。
 
 只允许从本地已有的 ADVISOR_STATE.md 或最新 Phase 1 输出中读取真实导师名单。
 如果没有真实的 Phase 1 状态文件，请明确说明并停止；绝对不要使用界面中的演示导师姓名。
-精确 advisor-program IDs：${JSON.stringify([...selected])}
-精确 selected_sections：${JSON.stringify([...selectedSections])}
-社区资料本地下载授权：${communityConsent ? "已授权" : "未授权"}。
+精确 advisor-program IDs：${JSON.stringify(confirmed.selectedAdvisorProgramIds)}
+精确 selected_sections：${JSON.stringify(confirmed.selectedSections)}
+确认版本：${confirmed.revision}；配置指纹：${confirmed.fingerprint}
+社区资料本地下载授权：${confirmed.communitySources.consented ? "已授权" : "未授权"}。
 不得改用 Top N 或只按人数猜测对象；未选择的维度写“用户未选择复核”。
 完成后将结构化结果写入 outputs/detective-results.json，并生成 outputs/advisor_detective_YYYYMMDD.xlsx。`, "detective");
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : "背调配置保存失败");
+      showNotice(error instanceof Error ? error.message : "背调最终确认失败");
     } finally {
       setInvestigationSaving(false);
     }
@@ -2013,6 +2081,7 @@ export default function Home() {
               </article>
             )}
             {(!detectiveComplete || evidenceConfigOpen) && (
+            <>
             <div className="evidence-layout configuration-panel">
               <article className="panel investigation-config">
                 <div className="config-heading">
@@ -2056,6 +2125,7 @@ export default function Home() {
                 </div>
               </article>
 
+              {(communityRelevant || communityCache.state !== "missing") && (
               <article className="panel community-config">
                 <div className="config-heading">
                   <div>
@@ -2073,8 +2143,11 @@ export default function Home() {
                   </span>
                 </div>
                 <p>
-                  仅在当前申请项目本地保存第三方红黑榜快照，不进入 Git。匿名内容只作为线索，还会继续核查其他社区和正式来源。
+                  {communityRelevant
+                    ? "仅在当前申请项目本地保存第三方红黑榜快照，不进入 Git。匿名内容只作为线索，还会继续核查其他社区和正式来源。"
+                    : "当前选择不包含社区相关维度；不能新增或刷新社区资料，但仍可清除以前的本地缓存。"}
                 </p>
+                {communityRelevant && (
                 <label className="consent-row">
                   <input
                     type="checkbox"
@@ -2082,23 +2155,28 @@ export default function Home() {
                     onChange={(event) => {
                       const consented = event.target.checked;
                       setCommunityConsent(consented);
+                      setInvestigationConfirmOpen(false);
                       void saveInvestigationConfiguration(
-                        false,
                         { communityConsent: consented },
                         false,
                       ).catch(() => showNotice("社区资料授权状态暂时未能保存"));
                     }}
                   />
-                  <span>我同意为本次导师风评调查在本地下载并解析这些第三方资料</span>
+                  <span>我希望在最终确认时，授权本次调查在本地下载并解析这些第三方资料</span>
                 </label>
+                )}
                 {communityCache.error && (
                   <div className="cache-error">{communityCache.error}</div>
                 )}
                 <div className="cache-actions">
                   <button
                     className="secondary-button"
-                    disabled={!communityConsent || communityCache.state === "refreshing"}
-                    onClick={refreshCommunityKnowledge}
+                    disabled={
+                      !confirmedMatchesCurrentDraft ||
+                      !confirmedInvestigation?.communitySources.consented ||
+                      communityCache.state === "refreshing"
+                    }
+                    onClick={() => void refreshCommunityKnowledge()}
                   >
                     刷新本地资料
                   </button>
@@ -2111,7 +2189,52 @@ export default function Home() {
                   </button>
                 </div>
               </article>
+              )}
             </div>
+            {investigationConfirmOpen && (
+              <article className="panel phase-summary investigation-confirmation">
+                <span className="phase-summary-icon">!</span>
+                <div>
+                  <strong>请最终确认本次背调范围</strong>
+                  <p>
+                    将调查 {selected.size} 个导师—项目组合、
+                    {selectedSections.size} 个维度，共 {selected.size * selectedSections.size} 个工作单元。
+                  </p>
+                  <p>
+                    导师—项目：
+                    {candidates
+                      .filter((candidate) => selected.has(candidate.advisorProgramId))
+                      .map((candidate) => `${candidate.name}｜${candidate.program}`)
+                      .join("；")}
+                  </p>
+                  <p>调查维度：{selectedSectionLabels.join("、")}</p>
+                  <p>
+                    社区资料：
+                    {communityRelevant
+                      ? communityConsent
+                        ? "确认后授权本次本地下载与解析"
+                        : "不授权，仍使用其他公开来源"
+                      : "本次不涉及"}
+                  </p>
+                </div>
+                <div className="cache-actions">
+                  <button
+                    className="secondary-button"
+                    onClick={() => setInvestigationConfirmOpen(false)}
+                  >
+                    返回修改
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={investigationSaving}
+                    onClick={confirmAndStartInvestigation}
+                  >
+                    {investigationSaving ? "正在确认…" : "确认并准备开始背调"}
+                  </button>
+                </div>
+              </article>
+            )}
+            </>
             )}
             {!detectiveComplete && (
             <article className="panel honest-empty compact-empty">

@@ -1,8 +1,13 @@
 # Advisor Atlas shared data contract
 
-Use project-input `schema_version: 3`; status and researched-output records
+Use project-input `schemaVersion: 4`; status and researched-output records
 remain version 2. Store structured state in the application project, not inside
 a skill folder.
+
+`project.json` uses camelCase because it is shared with the Web project store.
+Do not write snake_case aliases for the same project fields. Researched entity
+records in `advisor_records.json`, `program_records.json`, and `evidence.json`
+continue to use the snake_case field names shown below.
 
 ## Project files
 
@@ -14,6 +19,58 @@ a skill folder.
 | `outputs/advisor_records.json` | Advisor facts, fit, selected-section results, and advisor-specific sources |
 | `outputs/program_records.json` | Deduplicated school/program/application facts |
 | `outputs/evidence.json` | Field-level evidence and community leads |
+
+## Direct CLI bootstrap
+
+If a user invokes the Skills in a normal local folder rather than a Web-created
+project, run the bundled deterministic initializer before research:
+
+```bash
+node .agents/skills/advisor-pipeline/scripts/init_project.mjs --root "$PWD"
+node .agents/skills/advisor-pipeline/scripts/init_project.mjs --root "$PWD" --check
+```
+
+Use the equivalent `.claude/skills/` path in Claude Code. Do not hand-compose a
+second version of this contract. The initializer preserves existing output
+files byte-for-byte, creates only missing outputs, and makes timestamped backups
+before safely normalizing an existing project or status file.
+
+```json
+{
+  "schemaVersion": 4,
+  "id": "stable-local-project-id",
+  "slug": "stable-local-project-id",
+  "name": "User-facing project name",
+  "season": "",
+  "degree": "",
+  "target": "",
+  "interests": [],
+  "shortlistTarget": 10,
+  "cv": null,
+  "investigation": {
+    "draft": {
+      "selectedAdvisorProgramIds": [],
+      "selectedSections": [
+        "identity_current_role",
+        "recent_research",
+        "current_projects_recruiting"
+      ],
+      "communitySources": {"requested": false},
+      "revision": 0,
+      "updatedAt": "ISO-8601"
+    },
+    "confirmed": null
+  },
+  "createdAt": "ISO-8601",
+  "updatedAt": "ISO-8601"
+}
+```
+
+Also create `status.json` with the Pipeline status schema and initialize the
+four structured output files as empty JSON arrays. Derive IDs from the local
+project folder without renaming the user's folder. Do not add sample records.
+Do not infer `target`, `degree`, `season`, or interests from unrelated output
+fields. Leave unknown values blank and ask for them at the normal workflow gate.
 
 ## Stable IDs
 
@@ -122,25 +179,54 @@ Keep advisor-specific facts separate from program facts:
 
 ## Investigation configuration
 
-Persist exact values in `project.json`:
+Draft selections and final authorization are separate. Checkbox/menu changes
+modify only `investigation.draft`. Detective and community-cache operations may
+read only a current `investigation.confirmed` snapshot:
 
 ```json
 {
-  "shortlist_target": 10,
+  "shortlistTarget": 10,
   "investigation": {
-    "selected_advisor_program_ids": [],
-    "selected_sections": [],
-    "community_sources": {
-      "consented": false,
-      "refresh_requested": false,
-      "consented_at": null
+    "draft": {
+      "selectedAdvisorProgramIds": [],
+      "selectedSections": [],
+      "communitySources": {"requested": false},
+      "revision": 1,
+      "updatedAt": "ISO-8601"
+    },
+    "confirmed": {
+      "selectedAdvisorProgramIds": [],
+      "selectedSections": [],
+      "communitySources": {"consented": false, "consentedAt": null},
+      "revision": 1,
+      "confirmedAt": "ISO-8601",
+      "fingerprint": "sha256",
+      "source": "user_confirmed"
     }
   }
 }
 ```
 
-Validate IDs against `advisor_records.json` and `program_records.json` before
-starting a run. Passing only a count is invalid.
+After showing the exact final summary and receiving explicit user confirmation,
+direct CLI use must run the bundled confirmation script with every exact ID and
+section, for example:
+
+```bash
+node .agents/skills/advisor-pipeline/scripts/confirm_investigation.mjs \
+  --root "$PWD" --confirmed-by-user \
+  --advisor-id advisor-program-id \
+  --section identity_current_role --community no
+```
+
+Use repeated `--advisor-id` and `--section` flags or comma-separated values.
+The script validates IDs against `outputs/candidates.json`, creates a backup,
+and writes one revision-bound fingerprinted snapshot. Passing only a count is
+invalid. Never set `confirmed` by hand or before the explicit final answer.
+
+For schemaVersion 3 migration, non-empty selections without a real
+`detective-results.json` become draft-only and require confirmation. A legacy
+project with a real non-empty Detective artifact may be restored as a
+`source: legacy_artifact` historical snapshot.
 
 ## Cache and freshness
 

@@ -256,7 +256,41 @@ my-advisor-application/
 4. 申请季
 
 如果缺少信息，请先询问我，不要编造。
+
+Phase 1 完成后不要自动选择 Top N 进入背调。请像 Web 前端一样：
+1. 展示可选择的真实导师—项目组合；
+2. 展示全部调查维度，并默认选择前三项；
+3. 让我选择导师和调查维度；
+4. 如涉及导师风评，单独询问是否允许本地社区资料；
+5. 展示预计消耗和最终配置，得到我确认后再开始 Phase 2。
 ```
+
+首次直接运行时，`advisor-pipeline` 会在当前文件夹初始化与 Web
+兼容的 `project.json`、`status.json` 和 `outputs/`。CLI 与 Web 使用同一套
+结构化状态和三阶段流程，区别只在于 CLI 用编号菜单代替网页复选框。
+
+Phase 1 完成后，CLI 会显示类似下面的选择门：
+
+```text
+导师—项目组合：
+[1] Prof. A｜University A｜PhD in CS｜匹配 8.9｜eligible
+[2] Prof. B｜University B｜PhD in HCI｜匹配 8.3｜needs_confirmation
+
+调查维度：
+[1] 基础身份与当前职位（默认）
+[2] 最近三年研究兴趣与方向（默认）
+[3] 近期项目与招生状态（默认）
+[4-11] 其余可选维度
+
+回复示例：
+导师：1,2
+维度：保留默认，并增加 5,6,10
+社区资料：不允许
+```
+
+Agent 必须在显示精确导师、维度、预计消耗和社区资料授权的最终摘要后
+等待确认。菜单操作只保存草稿；只有最终确认才生成可供 Phase 2 使用的
+确认快照。只给人数、导师姓名或“Top N”不能代替精确选择。
 
 也可以只调用某个阶段：
 
@@ -265,7 +299,9 @@ my-advisor-application/
 ```
 
 ```text
-使用 advisor-detective 对我选中的导师进行深度背景调查。
+使用 advisor-detective 对候选导师进行背景调查。如果当前项目还没有保存
+精确导师—项目和调查维度，请先展示与 Web 前端一致的完整选项并等待我确认，
+不要自动按 Top N 开始。
 ```
 
 ```text
@@ -350,10 +386,12 @@ skills/
 - `advisor_shortlist_<日期>.xlsx`
 - `advisor_detective_<日期>.xlsx`
 - `advisor_application_ready_<日期>.xlsx`
-- `outputs/candidates.json`（Web 模式）
+- `outputs/candidates.json`
 - `outputs/advisor_records.json`
 - `outputs/program_records.json`
 - `outputs/evidence.json`
+- `outputs/detective-results.json`
+- `outputs/ranking.json`
 - `runs/<run-id>/events.ndjson`（Web 模式）
 
 具体结果取决于使用的 Skill、搜索范围和模型是否完成了对应任务。

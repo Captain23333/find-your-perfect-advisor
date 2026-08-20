@@ -40,7 +40,11 @@ test("server-renders the advisor console", async () => {
   assert.match(html, /可选/);
   assert.match(html, /选择需要调查的信息/);
   assert.match(html, /前三项是默认背调起点/);
-  assert.match(html, /导师社区资料/);
+  assert.doesNotMatch(
+    html,
+    /导师社区资料/,
+    "未选择社区相关维度时不应展示授权面板",
+  );
   assert.match(html, /客观申请可行性/);
   assert.match(html, /命令、文件或网络权限会在运行面板确认/);
   assert.doesNotMatch(html, /默认信息收集范围/);

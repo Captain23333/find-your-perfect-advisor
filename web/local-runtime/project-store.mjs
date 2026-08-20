@@ -1,5 +1,22 @@
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
+import {
+  DEFAULT_DETECTIVE_SECTIONS,
+  DETECTIVE_SECTIONS,
+  PROJECT_SCHEMA_VERSION,
+  confirmInvestigationDraft,
+  createStatus,
+  hasCommunitySections,
+  normalizeInterests,
+  normalizeInvestigation,
+  normalizeProjectMetadata,
+  normalizeShortlistTarget,
+  normalizeStatus,
+  updateInvestigationDraft,
+  validateInvestigationDraftAgainstCandidates,
+} from "../../skills/advisor-pipeline/scripts/project-contract.mjs";
+
+export { DEFAULT_DETECTIVE_SECTIONS, DETECTIVE_SECTIONS };
 
 const defaultProjectInput = {
   name: "我的申请项目",
@@ -10,24 +27,6 @@ const defaultProjectInput = {
   interests: [],
   shortlistTarget: 10,
 };
-
-export const DEFAULT_DETECTIVE_SECTIONS = [
-  "identity_current_role",
-  "recent_research",
-  "current_projects_recruiting",
-];
-
-export const DETECTIVE_SECTIONS = [
-  ...DEFAULT_DETECTIVE_SECTIONS,
-  "research_output_trend",
-  "group_members_outcomes",
-  "guidance_group_ecology",
-  "work_style_pressure",
-  "resources_career_support",
-  "integrity_public_controversies",
-  "international_student_support",
-  "collaboration_industry_network",
-];
 
 const COMMUNITY_CACHE_FILES = new Set([
   "community-blacklist-current.pdf",
@@ -76,28 +75,9 @@ export function createProjectStore(projectRoot) {
   async function readStatus(target) {
     try {
       const status = JSON.parse(await readFile(resolve(target, "status.json"), "utf8"));
-      return {
-        schemaVersion: 2,
-        stage: status.phase === "intake" ? "intake" : "discovery",
-        shortlistCount: Number(status.highMatchCount || 0),
-        objectiveReadyCount: 0,
-        selectedCount: 0,
-        ...status,
-      };
+      return normalizeStatus(status);
     } catch {
-      return {
-        schemaVersion: 2,
-        phase: "intake",
-        stage: "intake",
-        candidateCount: 0,
-        shortlistCount: 0,
-        objectiveReadyCount: 0,
-        selectedCount: 0,
-        evidenceCount: 0,
-        evidenceCoverage: 0,
-        rankingCount: 0,
-        updatedAt: null,
-      };
+      return createStatus();
     }
   }
 
@@ -115,6 +95,17 @@ export function createProjectStore(projectRoot) {
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, "-")}`,
         program: String(candidate?.program || ""),
+        name: String(candidate?.name || ""),
+        school: String(candidate?.school || ""),
+        initials: String(candidate?.initials || ""),
+        rank: Number(candidate?.rank || index + 1),
+        fit: Number(candidate?.fit || 0),
+        status: String(candidate?.status || "待核实"),
+        statusTone: String(candidate?.statusTone || "unknown"),
+        directions: Array.isArray(candidate?.directions)
+          ? candidate.directions.map(String)
+          : [],
+        evidence: Math.max(0, Number(candidate?.evidence) || 0),
         feasibility: String(candidate?.feasibility || "needs_confirmation"),
         feasibilityReasons: Array.isArray(candidate?.feasibilityReasons)
           ? candidate.feasibilityReasons.map(String)
@@ -134,6 +125,12 @@ export function createProjectStore(projectRoot) {
         selectedSections: Array.isArray(parsed?.selectedSections)
           ? parsed.selectedSections.map(String)
           : [],
+        communitySources: {
+          consented: Boolean(
+            parsed?.communitySources?.consented ??
+              parsed?.community_sources?.consented,
+          ),
+        },
         results: Array.isArray(parsed?.results) ? parsed.results : [],
         evidenceCount: Number(parsed?.evidenceCount || 0),
         evidenceCoverage: Number(parsed?.evidenceCoverage || 0),
@@ -169,120 +166,11 @@ export function createProjectStore(projectRoot) {
     }
   }
 
-  function normalizeInterests(input) {
-    if (!Array.isArray(input)) return [];
-    const interests = input
-      .map((interest) => ({
-        name: String(interest?.name || "").trim().slice(0, 120),
-        weight: Number(interest?.weight),
-      }))
-      .filter((interest) => interest.name);
-    if (!interests.length) return [];
-
-    const explicitTotal = interests.reduce(
-      (sum, interest) =>
-        sum + (Number.isFinite(interest.weight) && interest.weight > 0 ? interest.weight : 0),
-      0,
-    );
-    const missingCount = interests.filter(
-      (interest) => !Number.isFinite(interest.weight) || interest.weight <= 0,
-    ).length;
-    const explicitCount = interests.length - missingCount;
-    const fallbackWeight =
-      explicitTotal > 0 && explicitTotal < 100 && missingCount > 0
-        ? (100 - explicitTotal) / missingCount
-        : explicitTotal > 0 && explicitCount > 0
-          ? explicitTotal / explicitCount
-          : 1;
-    const basis = interests.map((interest) => ({
-      ...interest,
-      weight:
-        Number.isFinite(interest.weight) && interest.weight > 0
-          ? interest.weight
-          : fallbackWeight,
-    }));
-    const basisTotal = basis.reduce((sum, interest) => sum + interest.weight, 0);
-    return basis.map((interest, index) => ({
-      name: interest.name,
-      weight:
-        index === basis.length - 1
-          ? Math.round(
-              (100 -
-                basis
-                  .slice(0, -1)
-                  .reduce(
-                    (sum, item) =>
-                      sum + Math.round((item.weight / basisTotal) * 1000) / 10,
-                    0,
-                  )) *
-                10,
-            ) / 10
-          : Math.round((interest.weight / basisTotal) * 1000) / 10,
-    }));
-  }
-
-  function normalizeShortlistTarget(value, fallback = 10) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.max(5, Math.min(50, Math.round(parsed)));
-  }
-
-  function normalizeSectionList(input, allowed, fallback = []) {
-    if (!Array.isArray(input)) return [...fallback];
-    return [...new Set(input.map(String).filter((item) => allowed.includes(item)))];
-  }
-
-  function normalizeInvestigation(input, existing = {}) {
-    const selectedIds = Array.isArray(input?.selectedAdvisorProgramIds)
-      ? input.selectedAdvisorProgramIds
-      : existing.selectedAdvisorProgramIds;
-    const consented = Boolean(
-      input?.communitySources?.consented ??
-        existing.communitySources?.consented ??
-        false,
-    );
-    return {
-      selectedAdvisorProgramIds: [
-        ...new Set((selectedIds || []).map(String).filter(Boolean)),
-      ].slice(0, 30),
-      selectedSections: normalizeSectionList(
-        input?.selectedSections ?? existing.selectedSections,
-        DETECTIVE_SECTIONS,
-        DEFAULT_DETECTIVE_SECTIONS,
-      ),
-      communitySources: {
-        consented,
-        refreshRequested: Boolean(
-          input?.communitySources?.refreshRequested ??
-            existing.communitySources?.refreshRequested ??
-            false,
-        ),
-        consentedAt: consented
-          ? input?.communitySources?.consentedAt ||
-            existing.communitySources?.consentedAt ||
-            new Date().toISOString()
-          : null,
-      },
-    };
-  }
-
-  function normalizeMetadata(metadata) {
-    const upgradingFromFinderSelections = Number(metadata.schemaVersion || 0) < 3;
-    return {
-      ...metadata,
-      schemaVersion: 3,
-      shortlistTarget: normalizeShortlistTarget(metadata.shortlistTarget),
-      investigation: normalizeInvestigation(
-        upgradingFromFinderSelections &&
-          !(metadata.investigation?.selectedSections || []).length
-          ? {
-              ...metadata.investigation,
-              selectedSections: DEFAULT_DETECTIVE_SECTIONS,
-            }
-          : metadata.investigation,
-        metadata.investigation,
-      ),
-    };
+  function normalizeMetadata(metadata, fallbackId, legacyDetectiveResults = null) {
+    return normalizeProjectMetadata(metadata, {
+      fallbackId,
+      legacyDetectiveResults,
+    });
   }
 
   function projectReadiness(metadata) {
@@ -319,15 +207,18 @@ export function createProjectStore(projectRoot) {
 
   async function getProject(slug) {
     const target = projectPath(slug);
+    const detectiveResults = await readDetectiveResults(target);
     const metadata = normalizeMetadata(
       JSON.parse(await readFile(resolve(target, "project.json"), "utf8")),
+      slug,
+      detectiveResults,
     );
     return {
       ...metadata,
       path: target,
       status: await readStatus(target),
       candidates: await readCandidates(target),
-      detectiveResults: await readDetectiveResults(target),
+      detectiveResults,
       rankings: await readRankings(target),
       readiness: projectReadiness(metadata),
     };
@@ -366,8 +257,8 @@ export function createProjectStore(projectRoot) {
     }
 
     const now = new Date().toISOString();
-    const metadata = {
-      schemaVersion: 3,
+    const metadata = normalizeProjectMetadata({
+      schemaVersion: PROJECT_SCHEMA_VERSION,
       id: slug,
       slug,
       name: String(input.name || slug).trim(),
@@ -380,20 +271,8 @@ export function createProjectStore(projectRoot) {
       investigation: normalizeInvestigation(input.investigation),
       createdAt: now,
       updatedAt: now,
-    };
-    const status = {
-      schemaVersion: 2,
-      phase: "intake",
-      stage: "intake",
-      candidateCount: 0,
-      shortlistCount: 0,
-      objectiveReadyCount: 0,
-      selectedCount: 0,
-      evidenceCount: 0,
-      evidenceCoverage: 0,
-      rankingCount: 0,
-      updatedAt: now,
-    };
+    }, { fallbackId: slug, now });
+    const status = createStatus(now);
 
     await Promise.all([
       mkdir(resolve(target, "inputs"), { recursive: true }),
@@ -453,7 +332,10 @@ export function createProjectStore(projectRoot) {
   async function updateProject(slug, input) {
     const target = projectPath(slug);
     const projectFile = resolve(target, "project.json");
-    const metadata = normalizeMetadata(JSON.parse(await readFile(projectFile, "utf8")));
+    const metadata = normalizeMetadata(
+      JSON.parse(await readFile(projectFile, "utf8")),
+      slug,
+    );
     const updated = {
       ...metadata,
       name:
@@ -483,8 +365,11 @@ export function createProjectStore(projectRoot) {
       investigation:
         input.investigation === undefined
           ? metadata.investigation
-          : normalizeInvestigation(input.investigation, metadata.investigation),
-      schemaVersion: 3,
+          : updateInvestigationDraft(
+              metadata.investigation,
+              input.investigation,
+            ),
+      schemaVersion: PROJECT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
     };
     if (!updated.name) updated.name = "未命名申请项目";
@@ -492,10 +377,58 @@ export function createProjectStore(projectRoot) {
     return getProject(slug);
   }
 
+  async function confirmInvestigation(slug, input = {}) {
+    const target = projectPath(slug);
+    const projectFile = resolve(target, "project.json");
+    const detectiveResults = await readDetectiveResults(target);
+    const metadata = normalizeMetadata(
+      JSON.parse(await readFile(projectFile, "utf8")),
+      slug,
+      detectiveResults,
+    );
+    if (!Number.isInteger(input.draftRevision)) {
+      const error = new Error("缺少有效的调查草稿版本，请重新检查最终摘要");
+      error.code = "MISSING_DRAFT_REVISION";
+      throw error;
+    }
+    const candidates = await readCandidates(target);
+    const validation = validateInvestigationDraftAgainstCandidates(
+      metadata.investigation,
+      candidates,
+    );
+    if (!validation.valid) {
+      const error = new Error(validation.errors.join("；"));
+      error.code = "INVALID_SELECTION";
+      throw error;
+    }
+    if (
+      metadata.investigation.draft.communitySources.requested &&
+      !hasCommunitySections(metadata.investigation.draft.selectedSections)
+    ) {
+      const error = new Error("当前维度不需要社区资料授权");
+      error.code = "INVALID_SELECTION";
+      throw error;
+    }
+    const now = new Date().toISOString();
+    const updated = {
+      ...metadata,
+      investigation: confirmInvestigationDraft(metadata.investigation, {
+        expectedRevision: input.draftRevision,
+        now,
+      }),
+      updatedAt: now,
+    };
+    await writeFile(projectFile, JSON.stringify(updated, null, 2));
+    return getProject(slug);
+  }
+
   async function setProjectCv(slug, cv) {
     const target = projectPath(slug);
     const projectFile = resolve(target, "project.json");
-    const metadata = normalizeMetadata(JSON.parse(await readFile(projectFile, "utf8")));
+    const metadata = normalizeMetadata(
+      JSON.parse(await readFile(projectFile, "utf8")),
+      slug,
+    );
     const updated = {
       ...metadata,
       cv: {
@@ -521,6 +454,7 @@ export function createProjectStore(projectRoot) {
   return {
     projectsRoot,
     createProject,
+    confirmInvestigation,
     ensureDefaultProject,
     getProject,
     listProjects,

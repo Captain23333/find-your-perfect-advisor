@@ -23,6 +23,26 @@ Phase 1 完成后，前端展示 shortlist。此时选择真正感兴趣的导�
 
 页面出现绿色的“P2 已完成”状态和“这轮背调已经完成”提示后，下面展示的是已完成结果，不需要再次点击背调。只有希望增加导师、增加维度或更新旧证据时，才使用“补充或重新背调”。
 
+### 直接调用 Skills 时的同等流程
+
+Codex CLI、Codex Desktop 或 Claude Code 直接调用 `advisor-pipeline` 时，
+必须执行与上述页面相同的选择门，只是将复选框转换为编号菜单：
+
+1. Phase 1 后展示真实 shortlist 中的导师—项目组合。
+2. 用户选择精确组合，不能由 Agent 自动取 Top N。
+3. 展示与前端相同顺序的 11 个调查维度，前三项默认选择。
+4. 按导师数 × 维度数显示较低、中等或较高的预计消耗。
+5. 涉及社区资料的维度单独询问本地下载授权，默认不允许。
+6. 显示最终摘要并得到明确确认后，才保存配置并开始 Phase 2。
+
+Web 复选框和 CLI 菜单在确认前都只是 `investigation.draft`。最终确认会
+生成带 revision 和 fingerprint 的 `investigation.confirmed` 快照；Phase 2
+和社区资料刷新只能使用仍与当前草稿一致的确认快照。修改任一导师、项目、
+维度或社区资料选择后，必须重新确认。
+
+直接调用 `advisor-detective` 时，如果项目尚未保存精确选择，也必须先
+补做这套菜单，不得只要求用户填写内部 ID，也不得静默按排名开始。
+
 正式运行会自动在当前项目的 `outputs/` 文件夹生成：
 
 - `detective-results.json`：前端读取的结构化结果
@@ -63,7 +83,7 @@ projects/<project-id>/
 └── runs/
 ```
 
-- `project.json` 保存用户输入、精确导师选择和 `selectedSections`。
+- `project.json` 保存用户输入、调查草稿和最终确认快照；草稿不能直接授权背调。
 - `status.json` 保存轻量阶段计数，不是结果内容的唯一依据。
 - `outputs/` 保存 JSON、Excel 和报告。
 - `runs/` 保存每次 Agent 运行事件。
@@ -93,6 +113,7 @@ Codex、Claude Code 或自定义 API 需要命令、文件或网络权限时，�
 8. 桌面与窄屏布局是否都没有横向溢出。
 9. `npm test`、`npm run lint` 和浏览器回归是否通过。
 10. 本文档、根目录 `README.md` 和 `web/README.md` 是否同步更新。
+11. CLI 是否仍展示与前端相同顺序的 11 个维度、默认三项、成本阈值和社区授权门。
 
 ## 本地启动
 

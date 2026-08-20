@@ -29,7 +29,7 @@ weights are supplied, normalize them transparently.
 
 Accept optional hard constraints such as full funding, maximum tuition, ranking
 cutoff, location, or excluded institutions. Accept a user-selected
-`shortlist_target` from 5 to 50, defaulting to 10. Preserve hard constraints
+`shortlistTarget` from 5 to 50, defaulting to 10. Preserve hard constraints
 separately.
 
 If the complete Advisor Atlas skill set is present, read
@@ -56,7 +56,7 @@ Structured JSON is the source of truth.
    interests from the real CV when provided.
 2. Combine CV-derived signals with any user-entered research interests. Do not
    require the user to repeat interests already clear from the CV.
-3. Confirm the target scope and `shortlist_target`.
+3. Confirm the target scope and `shortlistTarget`.
 4. Record degree, intake, and hard constraints when present. If degree or intake
    is missing, discovery may continue but the objective screen must pause.
 
@@ -66,10 +66,10 @@ Size the roster to the user's actual scope:
 
 - For one explicitly named school, department, institute, or lab, cover the
   complete plausible official roster without padding it to an arbitrary
-  minimum. Aim for roughly `shortlist_target * 2` when that many relevant,
+  minimum. Aim for roughly `shortlistTarget * 2` when that many relevant,
   currently eligible advisors exist.
 - For broad multi-school or regional searches, aim for roughly
-  `shortlist_target * 3`, capped at 60.
+  `shortlistTarget * 3`, capped at 60.
 
 Use official faculty pages,
 targeted search, Scholar, dblp, OpenReview, or field directories. Record only:
@@ -105,7 +105,7 @@ scholarships, deadlines, and community opinions out of this score.
 
 ### 4. Shortlist
 
-Select up to `shortlist_target` research-relevant advisors for objective
+Select up to `shortlistTarget` research-relevant advisors for objective
 feasibility research.
 Preserve excluded candidates and reasons. Do not deep-profile all discovery
 rows merely to fill an output.
