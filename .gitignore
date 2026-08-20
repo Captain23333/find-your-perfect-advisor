@@ -9,3 +9,6 @@ skills/advisor-detective/references/community-red-flags-current.txt
 skills/advisor-detective/references/community-knowledge-metadata.json
 skills/advisor-detective/references/community-links.json
 skills/advisor-detective/references/.community-*.tmp
+
+# macOS Finder metadata
+.DS_Store
