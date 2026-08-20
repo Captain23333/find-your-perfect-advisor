@@ -293,6 +293,7 @@ export default function Home() {
   const intakeRef = useRef<HTMLElement | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const investigationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const syncedProjectIdRef = useRef<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [selectedSections, setSelectedSections] = useState<Set<string>>(
     () => new Set(),
@@ -533,6 +534,11 @@ export default function Home() {
 
   useEffect(() => {
     if (!activeProject) return;
+    // Saving a draft replaces the project object, so this effect would re-run on
+    // every checkbox click and reset the panels the user is still working in.
+    // Local editing state only needs to be re-seeded when the project changes.
+    if (syncedProjectIdRef.current === activeProject.id) return;
+    syncedProjectIdRef.current = activeProject.id;
     setApplicationDraft({
       season: activeProject.season || "",
       degree: activeProject.degree || "",
@@ -1013,6 +1019,10 @@ export default function Home() {
             if (event.status === "completed") {
               if (runnerMode === "detective") {
                 setView("evidence");
+                // A finished round is the only reason to fold the configuration
+                // away; editing the draft must leave the panel where it is.
+                setEvidenceConfigOpen(false);
+                setInvestigationConfirmOpen(false);
                 showNotice("导师背调已完成，证据与风险信息已更新");
               } else if (runnerMode === "ranking") {
                 setView("ranking");
