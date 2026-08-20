@@ -48,14 +48,18 @@ internal IDs or section names.
    discarding or rewriting existing Finder outputs. Do not hand-compose the
    missing project files.
 3. If the exact advisor or section selection is missing, run the same
-   interactive selection gate defined in Advisor Pipeline:
-   - display numbered real advisor-program rows from `outputs/candidates.json`;
-   - display all 11 ordered section choices from
-     `references/investigation-sections.md`;
-   - preselect only the three documented defaults;
-   - show the Web-equivalent cost level;
-   - ask separately for community-source consent when relevant;
-   - show a final summary and wait for explicit confirmation.
+   interactive selection gate defined in Advisor Pipeline. Render the menu with
+   `node .agents/skills/advisor-pipeline/scripts/render_investigation_menu.mjs --root "$PWD"`
+   and show its output verbatim — it already contains the numbered
+   advisor-program rows with stable IDs, all 11 ordered sections with their
+   three defaults, and the Web-equivalent cost level. Then ask separately for
+   community-source consent when relevant, show a final summary, and wait for
+   explicit confirmation.
+
+   While selecting, read only `project.json`, `outputs/candidates.json`, and
+   the dimension catalog. Do not open advisor records, evidence bundles,
+   previous detective results, or the community cache, and make no network
+   request until a confirmation snapshot exists.
 4. Resolve names or list numbers to stable `advisorProgramId` values. If one
    name maps to multiple programs, make the user choose the exact program.
 5. After showing the final summary and receiving explicit confirmation, run the

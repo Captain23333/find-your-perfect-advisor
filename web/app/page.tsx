@@ -11,8 +11,37 @@ type RunState =
   | "running"
   | "waiting_permission"
   | "completed"
+  | "partial"
+  | "needs_input"
   | "failed"
-  | "stopped";
+  | "cancelled"
+  | "interrupted";
+
+type RunInputField = {
+  id: string;
+  label: string;
+  required: boolean;
+  hint: string | null;
+};
+
+type RunInputRequest = {
+  reason: string | null;
+  fields: RunInputField[];
+  requestedAt: string;
+};
+
+type ActiveRun = {
+  id: string;
+  projectId: string;
+  provider: string;
+  mode: RunnerMode;
+  status: string;
+  startedAt: string;
+  outputDirectory: string;
+  missingArtifacts?: string[];
+  requestedInput?: RunInputRequest | null;
+  pendingPermissions?: PermissionRequest[];
+};
 
 type ProviderHealth = {
   installed: boolean;
@@ -60,6 +89,11 @@ type ProjectReadiness = {
   objectiveMissing: string[];
   matchingSignal: "cv" | "interests" | "none";
   interestWeightTotal: number;
+  cvValid?: boolean;
+  modes?: Record<
+    "finder" | "finder_objective" | "detective" | "ranking",
+    { ready: boolean; missing: string[] }
+  >;
 };
 
 type AdvisorProject = {
@@ -99,6 +133,9 @@ type AdvisorProject = {
   cv: {
     name: string;
     path: string;
+    absolutePath: string | null;
+    valid: boolean;
+    issue: string | null;
     size: number;
     type: string;
     uploadedAt: string;
@@ -159,9 +196,15 @@ type RunEvent = {
   at?: string;
   type: string;
   source: string;
+  level?: "progress" | "warning" | "action_required" | "error" | "diagnostic";
   message?: string;
   status?: string;
+  mode?: RunnerMode;
+  missingArtifacts?: string[];
+  requestedInput?: RunInputRequest | null;
+  pendingPermissions?: PermissionRequest[];
   outputDirectory?: string;
+  raw?: unknown;
   permission?: PermissionRequest;
   permissionId?: string;
   decision?: PermissionDecision;
@@ -221,6 +264,27 @@ Phase 1 启动前只检查：
 研究兴趣和权重是可选补充；没有权重时按等权处理。
 严格按照 skill 执行，并保留每条关键结论的来源。`;
 
+const runModeArtifactLabels: Record<RunnerMode, string> = {
+  finder: "Phase 1 候选导师",
+  detective: "Phase 2 背调结果",
+  ranking: "Phase 3 综合排名",
+};
+
+function runModeArtifactLabel(mode: RunnerMode) {
+  return runModeArtifactLabels[mode] || "本阶段结果";
+}
+
+const runInputFieldLabels: Record<string, string> = {
+  degree: "目标学位",
+  degreeLevel: "目标学位",
+  season: "申请季",
+  target: "目标院校或地区范围",
+  interests: "研究兴趣（逗号分隔）",
+  shortlistTarget: "shortlist 数量",
+};
+
+const hiddenProjectsStorageKey = "advisor-atlas.hidden-project-ids.v1";
+
 function Sparkline() {
   return (
     <div className="sparkline" aria-label="候选导师匹配分趋势">
@@ -248,6 +312,17 @@ export default function Home() {
   const [projectsRoot, setProjectsRoot] = useState("");
   const [activeProjectId, setActiveProjectId] = useState("");
   const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [hiddenProjectIds, setHiddenProjectIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [hiddenProjectsReady, setHiddenProjectsReady] = useState(false);
+  const [hiddenProjectsOpen, setHiddenProjectsOpen] = useState(false);
+  const [projectMenuId, setProjectMenuId] = useState("");
+  const [deleteProjectTarget, setDeleteProjectTarget] = useState<AdvisorProject | null>(
+    null,
+  );
+  const [deleteProjectConfirmation, setDeleteProjectConfirmation] = useState("");
+  const [deleteProjectBusy, setDeleteProjectBusy] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [projectDraft, setProjectDraft] = useState({ name: "" });
   const [applicationDraft, setApplicationDraft] = useState<{
@@ -277,6 +352,14 @@ export default function Home() {
   const [runStalled, setRunStalled] = useState(false);
   const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
   const [resolvingPermissionId, setResolvingPermissionId] = useState("");
+  const [missingArtifacts, setMissingArtifacts] = useState<string[]>([]);
+  const [technicalEvents, setTechnicalEvents] = useState<RunEvent[]>([]);
+  const [technicalOpen, setTechnicalOpen] = useState(false);
+  const [requestedInput, setRequestedInput] = useState<RunInputRequest | null>(null);
+  const [inputAnswers, setInputAnswers] = useState<Record<string, string>>({});
+  const [inputSaving, setInputSaving] = useState(false);
+  const [activeRun, setActiveRun] = useState<ActiveRun | null>(null);
+  const [lastInterruptedRun, setLastInterruptedRun] = useState<ActiveRun | null>(null);
   const [customForm, setCustomForm] = useState({
     name: "Custom API",
     baseUrl: "",
@@ -293,6 +376,8 @@ export default function Home() {
   const intakeRef = useRef<HTMLElement | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const investigationSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const attachedRunIdRef = useRef("");
+  const runnerModeRef = useRef<RunnerMode>("finder");
   const syncedProjectIdRef = useRef<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [selectedSections, setSelectedSections] = useState<Set<string>>(
@@ -318,11 +403,21 @@ export default function Home() {
       setProjects(nextProjects);
       setProjectsRoot(payload.root || "");
       setActiveProjectId((current) => {
-        if (preferredId && nextProjects.some((item) => item.id === preferredId)) {
+        if (
+          preferredId &&
+          !hiddenProjectIds.has(preferredId) &&
+          nextProjects.some((item) => item.id === preferredId)
+        ) {
           return preferredId;
         }
-        if (current && nextProjects.some((item) => item.id === current)) return current;
-        return nextProjects[0]?.id || "";
+        if (
+          current &&
+          !hiddenProjectIds.has(current) &&
+          nextProjects.some((item) => item.id === current)
+        ) {
+          return current;
+        }
+        return nextProjects.find((item) => !hiddenProjectIds.has(item.id))?.id || "";
       });
     } finally {
       setProjectsLoading(false);
@@ -374,7 +469,36 @@ export default function Home() {
         window.clearTimeout(noticeTimerRef.current);
       }
     };
+    // Initial bootstrap is intentionally one-shot; later project refreshes are
+    // triggered by explicit mutations and project switches.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(hiddenProjectsStorageKey) || "[]");
+      if (Array.isArray(saved)) {
+        setHiddenProjectIds(new Set(saved.map(String)));
+      }
+    } catch {
+      // A damaged browser preference must not make the project list unusable.
+    } finally {
+      setHiddenProjectsReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hiddenProjectsReady) return;
+    window.localStorage.setItem(
+      hiddenProjectsStorageKey,
+      JSON.stringify([...hiddenProjectIds]),
+    );
+    if (activeProjectId && hiddenProjectIds.has(activeProjectId)) {
+      setActiveProjectId(
+        projects.find((item) => !hiddenProjectIds.has(item.id))?.id || "",
+      );
+    }
+  }, [activeProjectId, hiddenProjectIds, hiddenProjectsReady, projects]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -433,7 +557,29 @@ export default function Home() {
     objectiveMissing: ["填写目标学位", "填写申请季"],
     matchingSignal: "none",
     interestWeightTotal: 0,
+    cvValid: false,
+    modes: {
+      finder: { ready: false, missing: ["填写目标院校或地区范围"] },
+      finder_objective: { ready: false, missing: [] },
+      detective: { ready: false, missing: [] },
+      ranking: { ready: false, missing: [] },
+    },
   };
+  // A project payload from an older runtime has no readiness matrix. Degrade to
+  // the Phase 1 rule instead of throwing while rendering, which blanks the page.
+  function modeReadiness(mode: RunnerMode): { ready: boolean; missing: string[] } {
+    const modes = projectReadiness.modes;
+    if (!modes) {
+      return {
+        ready: projectReadiness.phase1Ready,
+        missing: projectReadiness.missing || [],
+      };
+    }
+    if (mode === "detective") return modes.detective;
+    if (mode === "ranking") return modes.ranking;
+    return modes.finder;
+  }
+
   const draftInterestTotal = applicationDraft.interests.reduce(
     (sum, interest) => sum + (Number(interest.weight) || 0),
     0,
@@ -495,7 +641,7 @@ export default function Home() {
           startLabel: "开始背调",
           completionHint: "完成后会自动更新背调证据页面。",
           summary: [
-            `只调查已选择的 ${selected.size} 位导师—项目组合`,
+            `只调查已选择的 ${selected.size} 个导师—项目组合`,
             `调查 ${selectedSectionLabels.length} 个维度：${selectedSectionLabels.join("、")}`,
             communityConsent
               ? "导师风评相关维度可使用已授权的本地社区资料"
@@ -561,8 +707,8 @@ export default function Home() {
       Boolean(activeProject.investigation?.draft?.communitySources?.requested),
     );
     setFileName(activeProject.cv?.name || "尚未上传真实 CV");
-    setFilePath(activeProject.cv?.path || "");
-    setUploadState(activeProject.cv?.path ? "ready" : "idle");
+    setFilePath(activeProject.cv?.valid ? activeProject.cv.absolutePath || "" : "");
+    setUploadState(activeProject.cv?.valid ? "ready" : activeProject.cv?.path ? "failed" : "idle");
     setIntakeDirty(false);
     setEvidenceConfigOpen(!activeProject.detectiveResults?.results.length);
     setInvestigationConfirmOpen(false);
@@ -586,6 +732,68 @@ export default function Home() {
         });
       });
   }, [activeProjectId]);
+
+  // Closing the panel or reloading the page must not lose a running task. The
+  // runtime already tracks it; the console just never asked.
+  useEffect(() => {
+    if (!activeProjectId) return;
+    let cancelled = false;
+    if (activeRun && activeRun.projectId !== activeProjectId) {
+      attachedRunIdRef.current = "";
+      setActiveRun(null);
+      setRunState("idle");
+      setRunEvents([]);
+      setPendingPermissions([]);
+      setRequestedInput(null);
+      setMissingArtifacts([]);
+      setRunId("");
+      runIdRef.current = "";
+    }
+    fetch(`${runtimeUrl}/api/runs?projectId=${encodeURIComponent(activeProjectId)}`, {
+      cache: "no-store",
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (cancelled || !payload) return;
+        const running = (payload.active || [])[0] as ActiveRun | undefined;
+        if (running) {
+          setLastInterruptedRun(null);
+          void attachToRun(running);
+          return;
+        }
+        const latest = (payload.recent || [])[0] as ActiveRun | undefined;
+        if (latest?.status === "interrupted") {
+          setLastInterruptedRun(latest);
+          setRunnerMode(latest.mode);
+          runnerModeRef.current = latest.mode;
+          setRunId(latest.id);
+          runIdRef.current = latest.id;
+          setRunOutputDirectory(latest.outputDirectory || "");
+          setRunState("interrupted");
+          setMissingArtifacts(latest.missingArtifacts || []);
+          setRunEvents([
+            {
+              type: "run.interrupted",
+              source: "runtime",
+              level: "warning",
+              message:
+                "本地运行服务曾在任务结束前重启，这个 Agent 会话已经中断，请检查已有产物后重新启动。",
+            },
+          ]);
+        } else {
+          setLastInterruptedRun(null);
+          setRunState((current) => (current === "interrupted" ? "idle" : current));
+        }
+      })
+      .catch(() => {
+        // A missing runtime is already surfaced by the health check.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectId]);
+
   const steps = [
     {
       number: "01",
@@ -734,7 +942,13 @@ export default function Home() {
 
   function openRunner(prompt?: string, mode: RunnerMode = "finder") {
     if (prompt) setTaskPrompt(prompt);
+    // Reopening while a task is still running must show that task, not wipe it.
+    if (activeRun) {
+      setRunnerOpen(true);
+      return;
+    }
     setRunnerMode(mode);
+    runnerModeRef.current = mode;
     setAdvancedOpen(false);
     setRunState("idle");
     setRunId("");
@@ -743,6 +957,9 @@ export default function Home() {
     setRunEvents([]);
     setPendingPermissions([]);
     setResolvingPermissionId("");
+    setMissingArtifacts([]);
+    setRequestedInput(null);
+    setInputAnswers({});
     setLastRunActivityAt(0);
     setRunStalled(false);
     setRunnerOpen(true);
@@ -784,6 +1001,8 @@ export default function Home() {
     return null;
   }
 
+  // Closing only hides the panel. Stopping the agent is a separate, explicit
+  // decision the user has to make on purpose.
   function closeRunner() {
     const health = runtimeHealth?.providers[providerKey[provider]];
     if (!health?.installed || !health.loggedIn) {
@@ -814,9 +1033,11 @@ export default function Home() {
   function focusApplicationInput() {
     intakeRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     showNotice(
-      projectReadiness.missing.length
-        ? `请先完成：${projectReadiness.missing.join("、")}`
-        : "申请资料已齐全",
+      activeProject?.cv && !activeProject.cv.valid
+        ? activeProject.cv.issue || "CV 文件已失效，请重新上传"
+        : projectReadiness.missing.length
+          ? `请先完成：${projectReadiness.missing.join("、")}`
+          : "申请资料已齐全",
     );
   }
 
@@ -877,7 +1098,7 @@ export default function Home() {
   }
 
   function startPhaseOne() {
-    if (!projectReadiness.phase1Ready) {
+    if (!modeReadiness("finder").ready) {
       focusApplicationInput();
       return;
     }
@@ -914,9 +1135,168 @@ export default function Home() {
     }
   }
 
-  async function runAgent() {
+  // Both the POST that starts a run and the GET that re-attaches to one deliver
+  // the same NDJSON event stream, so a single reader keeps recovery and startup
+  // behaving identically.
+  async function consumeRunStream(body: ReadableStream<Uint8Array>, mode: RunnerMode) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const event = JSON.parse(line) as RunEvent;
+        setLastRunActivityAt(Date.now());
+        setRunStalled(false);
+        if (event.runId) {
+          runIdRef.current = event.runId;
+          setRunId(event.runId);
+        }
+        if (event.outputDirectory) setRunOutputDirectory(event.outputDirectory);
+        if (event.type === "run.attached") {
+          setPendingPermissions(event.pendingPermissions || []);
+          setRunState(
+            event.status === "needs_input"
+              ? "needs_input"
+              : event.pendingPermissions?.length
+                ? "waiting_permission"
+                : "running",
+          );
+          if (event.requestedInput) setRequestedInput(event.requestedInput);
+        }
+        if (event.type === "permission.requested" && event.permission) {
+          setPendingPermissions((current) => [
+            ...current.filter((item) => item.id !== event.permission?.id),
+            event.permission as PermissionRequest,
+          ]);
+          setRunState("waiting_permission");
+        }
+        if (event.type === "permission.resolved" && event.permissionId) {
+          setPendingPermissions((current) => {
+            const next = current.filter((item) => item.id !== event.permissionId);
+            if (!next.length) setRunState("running");
+            return next;
+          });
+        }
+        if (event.type === "input.requested" && event.requestedInput) {
+          setRequestedInput(event.requestedInput);
+          setInputAnswers({});
+        }
+        if (event.type === "run.waiting_input") {
+          setRunState("needs_input");
+          if (event.requestedInput) setRequestedInput(event.requestedInput);
+        }
+        if (event.type === "run.continued") {
+          setRunState("running");
+          setRequestedInput(null);
+        }
+        if (event.level === "diagnostic" || event.type === "diagnostic") {
+          // Internal plumbing stays available but never competes with progress.
+          setTechnicalEvents((current) => [...current.slice(-199), event]);
+        }
+        if (event.message && event.level !== "diagnostic") {
+          setRunEvents((current) => {
+            const previous = current[current.length - 1];
+            if (
+              event.type === "item/agentMessage/delta" &&
+              previous?.type === event.type &&
+              previous.source === event.source
+            ) {
+              return [
+                ...current.slice(0, -1),
+                {
+                  ...previous,
+                  message: `${previous.message || ""}${event.message || ""}`,
+                },
+              ];
+            }
+            return [...current.slice(-399), event];
+          });
+        }
+        if (event.type === "run.finished") {
+          setPendingPermissions([]);
+          setActiveRun(null);
+          attachedRunIdRef.current = "";
+          setRunState((event.status as RunState) || "completed");
+          setMissingArtifacts(event.missingArtifacts || []);
+          if (event.requestedInput) setRequestedInput(event.requestedInput);
+          await refreshProjects(activeProjectId);
+          // Only a verified artifact counts as done; a model that merely
+          // answered must never be reported as a finished phase.
+          if (event.status === "completed") {
+            if (mode === "detective") {
+              setView("evidence");
+              // A finished round is the only reason to fold the configuration
+              // away; editing the draft must leave the panel where it is.
+              setEvidenceConfigOpen(false);
+              setInvestigationConfirmOpen(false);
+              showNotice("导师背调已完成，证据与风险信息已更新");
+            } else if (mode === "ranking") {
+              setView("ranking");
+              showNotice("综合排名已生成");
+            } else {
+              setView("candidates");
+              showNotice("导师搜索已完成，候选名单已更新");
+            }
+          } else if (event.status === "needs_input") {
+            showNotice("本轮已结束，Agent 需要你补充资料后才能继续");
+          } else if (event.status === "partial") {
+            showNotice(`本轮已结束，但尚未产生${runModeArtifactLabel(mode)}`);
+          }
+        }
+      }
+    }
+  }
+
+  async function attachToRun(run: ActiveRun) {
+    if (attachedRunIdRef.current === run.id) return;
+    attachedRunIdRef.current = run.id;
+    setLastInterruptedRun(null);
+    setActiveRun(run);
+    setRunnerMode(run.mode);
+    runnerModeRef.current = run.mode;
+    setRunId(run.id);
+    runIdRef.current = run.id;
+    setRunOutputDirectory(run.outputDirectory || "");
+    setRunEvents([]);
+    setTechnicalEvents([]);
+    setMissingArtifacts([]);
+    setRequestedInput(run.requestedInput || null);
+    setRunState(run.pendingPermissions?.length ? "waiting_permission" : "running");
+    if (run.status === "needs_input") setRunState("needs_input");
+    setPendingPermissions(run.pendingPermissions || []);
+    setLastRunActivityAt(Date.now());
+    try {
+      const response = await fetch(`${runtimeUrl}/api/runs/${run.id}/stream`);
+      if (!response.ok || !response.body) throw new Error("无法接回正在运行的任务");
+      await consumeRunStream(response.body, run.mode);
+    } catch (error) {
+      attachedRunIdRef.current = "";
+      setActiveRun(null);
+      setRunState("failed");
+      setRunEvents((current) => [
+        ...current,
+        {
+          type: "run.error",
+          source: "runtime",
+          message:
+            error instanceof Error ? error.message : "无法接回正在运行的任务",
+        },
+      ]);
+    }
+  }
+
+  async function runAgent(promptOverride?: string) {
     const health = selectedProviderHealth();
-    if (!projectReadiness.phase1Ready) {
+    const readiness = modeReadiness(runnerMode);
+    if (!readiness.ready) {
       setRunnerOpen(false);
       focusApplicationInput();
       return;
@@ -924,6 +1304,7 @@ export default function Home() {
     if (!health?.installed || !health.loggedIn || !activeProjectId) return;
 
     setRunState("starting");
+    setLastInterruptedRun(null);
     setRunEvents([]);
     setLastRunActivityAt(Date.now());
     setRunStalled(false);
@@ -931,16 +1312,25 @@ export default function Home() {
     runIdRef.current = "";
     setRunOutputDirectory("");
     setPendingPermissions([]);
+    setTechnicalEvents([]);
+    setMissingArtifacts([]);
+    setRequestedInput(null);
 
     try {
-      const effectivePrompt = filePath
-        ? `${taskPrompt}\n\n已上传 CV：${filePath}`
-        : taskPrompt;
+      const basePrompt = promptOverride || taskPrompt;
+      const cvPath = activeProject?.cv?.absolutePath || filePath;
+      const effectivePrompt =
+        cvPath && activeProject?.cv?.valid
+          ? `${basePrompt}\n\n已上传 CV：${cvPath}`
+          : basePrompt;
       const response = await fetch(`${runtimeUrl}/api/runs`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           projectId: activeProjectId,
+          mode: runnerMode,
+          confirmedRevision:
+            activeProject?.investigation?.confirmed?.revision ?? undefined,
           provider:
             provider === "Codex"
               ? "codex"
@@ -951,6 +1341,15 @@ export default function Home() {
         }),
       });
 
+      if (response.status === 409) {
+        const payload = await response.json();
+        if (payload.activeRun) {
+          showNotice("该项目已有任务在运行，已为你接回原任务");
+          await attachToRun(payload.activeRun as ActiveRun);
+          return;
+        }
+        throw new Error(payload.error || "无法启动本地 Agent");
+      }
       if (!response.ok) {
         const payload = await response.json();
         throw new Error(payload.error || "无法启动本地 Agent");
@@ -958,85 +1357,20 @@ export default function Home() {
       if (!response.body) throw new Error("浏览器不支持流式输出");
 
       setRunState("running");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let pending = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        pending += decoder.decode(value, { stream: true });
-        const lines = pending.split(/\r?\n/);
-        pending = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          const event = JSON.parse(line) as RunEvent;
-          setLastRunActivityAt(Date.now());
-          setRunStalled(false);
-          if (event.runId) {
-            runIdRef.current = event.runId;
-            setRunId(event.runId);
-          }
-          if (event.outputDirectory) setRunOutputDirectory(event.outputDirectory);
-          if (event.type === "permission.requested" && event.permission) {
-            setPendingPermissions((current) => [
-              ...current.filter((item) => item.id !== event.permission?.id),
-              event.permission as PermissionRequest,
-            ]);
-            setRunState("waiting_permission");
-          }
-          if (event.type === "permission.resolved" && event.permissionId) {
-            setPendingPermissions((current) => {
-              const next = current.filter((item) => item.id !== event.permissionId);
-              if (!next.length) setRunState("running");
-              return next;
-            });
-          }
-          if (event.message) {
-            setRunEvents((current) => {
-              const previous = current[current.length - 1];
-              if (
-                event.type === "item/agentMessage/delta" &&
-                previous?.type === event.type &&
-                previous.source === event.source
-              ) {
-                return [
-                  ...current.slice(0, -1),
-                  {
-                    ...previous,
-                    message: `${previous.message || ""}${event.message || ""}`,
-                  },
-                ];
-              }
-              return [...current.slice(-399), event];
-            });
-          }
-          if (event.type === "run.finished") {
-            setPendingPermissions([]);
-            setRunState((event.status as RunState) || "completed");
-            await refreshProjects(activeProjectId);
-            if (event.status === "completed") {
-              if (runnerMode === "detective") {
-                setView("evidence");
-                // A finished round is the only reason to fold the configuration
-                // away; editing the draft must leave the panel where it is.
-                setEvidenceConfigOpen(false);
-                setInvestigationConfirmOpen(false);
-                showNotice("导师背调已完成，证据与风险信息已更新");
-              } else if (runnerMode === "ranking") {
-                setView("ranking");
-                showNotice("综合排名已生成");
-              } else {
-                setView("candidates");
-                showNotice("导师搜索已完成，候选名单已更新");
-              }
-            }
-          }
-        }
-      }
+      setActiveRun({
+        id: runIdRef.current,
+        projectId: activeProjectId,
+        provider,
+        mode: runnerMode,
+        status: "running",
+        startedAt: new Date().toISOString(),
+        outputDirectory: "",
+      });
+      await consumeRunStream(response.body, runnerMode);
     } catch (error) {
       setPendingPermissions([]);
+      setActiveRun(null);
+      attachedRunIdRef.current = "";
       setRunState("failed");
       setRunEvents((current) => [
         ...current,
@@ -1049,12 +1383,82 @@ export default function Home() {
     }
   }
 
-  async function stopAgent() {
+  async function cancelRun() {
     const currentRunId = runIdRef.current || runId;
     if (!currentRunId) return;
+    if (!window.confirm("取消后本轮进度不会保存，确定要停止正在运行的任务吗？")) {
+      return;
+    }
     await fetch(`${runtimeUrl}/api/runs/${currentRunId}/stop`, { method: "POST" });
     setPendingPermissions([]);
-    setRunState("stopped");
+    setActiveRun(null);
+    attachedRunIdRef.current = "";
+    setRunState("cancelled");
+  }
+
+
+  async function submitRequestedInput() {
+    if (!requestedInput || !activeProjectId) return;
+    const missing = requestedInput.fields.filter(
+      (field) => field.required && !(inputAnswers[field.id] || "").trim(),
+    );
+    if (missing.length) {
+      showNotice(
+        `还需要填写：${missing
+          .map((field) => field.label || runInputFieldLabels[field.id] || field.id)
+          .join("、")}`,
+      );
+      return;
+    }
+    setInputSaving(true);
+    try {
+      const patch: Record<string, unknown> = {};
+      for (const field of requestedInput.fields) {
+        const value = (inputAnswers[field.id] || "").trim();
+        if (!value) continue;
+        if (field.id === "degree" || field.id === "degreeLevel") patch.degree = value;
+        else if (field.id === "season") patch.season = value;
+        else if (field.id === "target") patch.target = value;
+        else if (field.id === "shortlistTarget") {
+          patch.shortlistTarget = Number(value) || 10;
+        } else if (field.id === "interests") {
+          patch.interests = value
+            .split(/[,，、]/)
+            .map((name) => name.trim())
+            .filter(Boolean)
+            .map((name) => ({ name, weight: 0 }));
+        }
+      }
+      const response = await fetch(`${runtimeUrl}/api/projects/${activeProjectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "补充资料保存失败");
+      await refreshProjects(activeProjectId);
+      const currentRunId = runIdRef.current || runId;
+      if (!currentRunId) throw new Error("原 Agent 会话已丢失，无法继续");
+      const continuation = await fetch(
+        `${runtimeUrl}/api/runs/${currentRunId}/continue`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ answers: inputAnswers }),
+        },
+      );
+      const continuationPayload = await continuation.json();
+      if (!continuation.ok) {
+        throw new Error(continuationPayload.error || "Agent 会话无法继续");
+      }
+      setRequestedInput(null);
+      setInputAnswers({});
+      setRunState("running");
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "补充资料保存失败");
+    } finally {
+      setInputSaving(false);
+    }
   }
 
   async function resolvePermission(permissionId: string, decision: PermissionDecision) {
@@ -1330,6 +1734,76 @@ export default function Home() {
     }
   }
 
+  function selectProject(projectId: string) {
+    setProjectMenuId("");
+    setActiveProjectId(projectId);
+    setFileName("尚未上传真实 CV");
+    setFilePath("");
+    setUploadState("idle");
+    setSelected(new Set());
+    setView("overview");
+  }
+
+  function hideProject(project: AdvisorProject) {
+    setHiddenProjectIds((current) => new Set(current).add(project.id));
+    setProjectMenuId("");
+    showNotice(`“${project.name}”已从列表隐藏，本地文件仍完整保留`);
+  }
+
+  function restoreProject(project: AdvisorProject) {
+    setHiddenProjectIds((current) => {
+      const next = new Set(current);
+      next.delete(project.id);
+      return next;
+    });
+    showNotice(`“${project.name}”已恢复到项目列表`);
+  }
+
+  function openDeleteProject(project: AdvisorProject) {
+    setProjectMenuId("");
+    setDeleteProjectTarget(project);
+    setDeleteProjectConfirmation("");
+  }
+
+  async function permanentlyDeleteProject() {
+    if (
+      !deleteProjectTarget ||
+      deleteProjectConfirmation !== deleteProjectTarget.name ||
+      deleteProjectBusy
+    ) {
+      return;
+    }
+    setDeleteProjectBusy(true);
+    try {
+      const response = await fetch(
+        `${runtimeUrl}/api/projects/${deleteProjectTarget.id}`,
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ confirmName: deleteProjectConfirmation }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "本地项目删除失败");
+      const deletedId = deleteProjectTarget.id;
+      const deletedName = deleteProjectTarget.name;
+      setHiddenProjectIds((current) => {
+        const next = new Set(current);
+        next.delete(deletedId);
+        return next;
+      });
+      setDeleteProjectTarget(null);
+      setDeleteProjectConfirmation("");
+      syncedProjectIdRef.current = null;
+      await refreshProjects();
+      showNotice(`“${deletedName}”及其本地文件已彻底删除`);
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "本地项目删除失败");
+    } finally {
+      setDeleteProjectBusy(false);
+    }
+  }
+
   const availableProviders = runtimeHealth
     ? [
         runtimeHealth.providers.codex,
@@ -1338,6 +1812,8 @@ export default function Home() {
       ].filter((item) => item.installed && item.loggedIn).length
     : null;
   const currentProviderHealth = selectedProviderHealth();
+  const visibleProjects = projects.filter((item) => !hiddenProjectIds.has(item.id));
+  const hiddenProjects = projects.filter((item) => hiddenProjectIds.has(item.id));
   const savedLabel = intakeSaving
     ? "正在保存"
     : intakeDirty
@@ -1394,29 +1870,82 @@ export default function Home() {
             <span className="nav-icon">◇</span> 最终排名
           </button>
 
-          <p className="nav-label second">申请项目</p>
-          {projectsLoading && <span className="project-loading">正在加载项目…</span>}
-          {projects.map((item) => (
-            <button
-              key={item.id}
-              className={`project-link ${item.id === activeProjectId ? "" : "subdued"}`}
-              onClick={() => {
-                setActiveProjectId(item.id);
-                setFileName("尚未上传真实 CV");
-                setFilePath("");
-                setUploadState("idle");
-                setSelected(new Set());
-                setView("overview");
-              }}
-            >
-              <span className={`project-dot ${item.id === activeProjectId ? "violet" : "mint"}`} />
-              {item.name}
-            </button>
-          ))}
-          <button className="project-link subdued" onClick={() => setProjectModalOpen(true)}>
-            <span className="project-dot mint" />
-            新建申请项目
-          </button>
+          <section className="project-nav" aria-label="申请项目">
+            <p className="nav-label second">申请项目</p>
+            <div className="project-list">
+              {projectsLoading && <span className="project-loading">正在加载项目…</span>}
+              {!projectsLoading && !visibleProjects.length && (
+                <span className="project-loading">暂无显示中的项目</span>
+              )}
+              {visibleProjects.map((item) => (
+                <div className="project-row" key={item.id}>
+                  <button
+                    className={`project-link ${item.id === activeProjectId ? "" : "subdued"}`}
+                    onClick={() => selectProject(item.id)}
+                    title={item.name}
+                  >
+                    <span
+                      className={`project-dot ${
+                        item.id === activeProjectId ? "violet" : "mint"
+                      }`}
+                    />
+                    <span className="project-name">{item.name}</span>
+                  </button>
+                  <button
+                    className="project-menu-button"
+                    aria-label={`管理项目 ${item.name}`}
+                    aria-expanded={projectMenuId === item.id}
+                    onClick={() =>
+                      setProjectMenuId((current) => (current === item.id ? "" : item.id))
+                    }
+                  >
+                    ⋯
+                  </button>
+                  {projectMenuId === item.id && (
+                    <div className="project-menu" role="menu">
+                      <button role="menuitem" onClick={() => hideProject(item)}>
+                        从列表隐藏
+                        <small>保留全部本地文件</small>
+                      </button>
+                      <button
+                        className="danger"
+                        role="menuitem"
+                        onClick={() => openDeleteProject(item)}
+                      >
+                        彻底删除本地文件
+                        <small>不可恢复</small>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <button
+                className="project-link subdued new-project-link"
+                onClick={() => setProjectModalOpen(true)}
+              >
+                <span className="project-dot mint" />
+                <span className="project-name">新建申请项目</span>
+              </button>
+              {hiddenProjects.length > 0 && (
+                <div className="hidden-projects">
+                  <button
+                    className="hidden-projects-toggle"
+                    onClick={() => setHiddenProjectsOpen((current) => !current)}
+                    aria-expanded={hiddenProjectsOpen}
+                  >
+                    {hiddenProjectsOpen ? "收起" : "显示"}已隐藏项目（{hiddenProjects.length}）
+                  </button>
+                  {hiddenProjectsOpen &&
+                    hiddenProjects.map((item) => (
+                      <div className="hidden-project-row" key={item.id}>
+                        <span title={item.name}>{item.name}</span>
+                        <button onClick={() => restoreProject(item)}>恢复</button>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          </section>
         </nav>
 
         <div className="sidebar-bottom">
@@ -1442,6 +1971,29 @@ export default function Home() {
             <strong>{projectsLoading ? "正在加载…" : activeProject?.name || "未选择项目"}</strong>
           </div>
           <div className="top-actions">
+            {activeRun && (
+              <button
+                className="running-badge"
+                onClick={() => setRunnerOpen(true)}
+                title="任务仍在后台运行，点击查看进度"
+              >
+                <span className="pulse-dot" />
+                任务运行中 · {runModeArtifactLabel(activeRun.mode)}
+              </button>
+            )}
+            {!activeRun && lastInterruptedRun && (
+              <button
+                className="running-badge interrupted-badge"
+                onClick={() => {
+                  setRunnerMode(lastInterruptedRun.mode);
+                  runnerModeRef.current = lastInterruptedRun.mode;
+                  setRunnerOpen(true);
+                }}
+                title="上次任务因本地运行服务重启而中断，点击查看"
+              >
+                上次任务已中断 · {runModeArtifactLabel(lastInterruptedRun.mode)}
+              </button>
+            )}
             <button
               className="agent-button"
               onClick={() => {
@@ -1694,11 +2246,13 @@ export default function Home() {
                   <small>
                     {uploadState === "uploading"
                       ? "正在保存到本地…"
-                      : uploadState === "ready"
-                        ? `${fileName} · 已保存`
-                        : uploadState === "failed"
-                          ? "保存失败，请重试"
-                          : "例如：Your_Name_CV.pdf · 支持 PDF / DOCX / MD"}
+                      : activeProject?.cv && !activeProject.cv.valid
+                        ? activeProject.cv.issue || "CV 文件已失效，请重新上传"
+                        : uploadState === "ready"
+                          ? `${fileName} · 已保存`
+                          : uploadState === "failed"
+                            ? "保存失败，请重试"
+                            : "例如：Your_Name_CV.pdf · 支持 PDF / DOCX / MD（不超过 20 MB）"}
                   </small>
                 </span>
                 <b>{uploadState === "ready" ? "更换" : "选择文件"}</b>
@@ -1922,14 +2476,16 @@ export default function Home() {
               <table>
                 <thead>
                   <tr>
-                    <th className="check-cell" />
-                    <th>导师</th>
-                    <th>项目</th>
-                    <th>研究方向</th>
-                    <th>招生状态</th>
-                    <th>客观可行性</th>
-                    <th>证据</th>
-                    <th>匹配分</th>
+                    <th className="check-cell" scope="col">
+                      <span className="visually-hidden">选择</span>
+                    </th>
+                    <th scope="col">导师</th>
+                    <th scope="col">项目</th>
+                    <th scope="col">研究方向</th>
+                    <th scope="col">招生状态</th>
+                    <th scope="col">客观可行性</th>
+                    <th scope="col">证据</th>
+                    <th scope="col">匹配分</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1961,12 +2517,7 @@ export default function Home() {
                           onChange={() => toggleCandidate(candidate.advisorProgramId)}
                         />
                       </td>
-                      <td>
-                        <span className="program-name">
-                          {candidate.program || "项目待核实"}
-                        </span>
-                      </td>
-                      <td>
+                      <th scope="row" className="advisor-row-header">
                         <div className="advisor-cell">
                           <span className="advisor-avatar">{candidate.initials}</span>
                           <span>
@@ -1974,6 +2525,11 @@ export default function Home() {
                             <small>{candidate.school}</small>
                           </span>
                         </div>
+                      </th>
+                      <td>
+                        <span className="program-name">
+                          {candidate.program || "项目待核实"}
+                        </span>
                       </td>
                       <td>
                         <div className="direction-tags">
@@ -2021,7 +2577,7 @@ export default function Home() {
 
             <div className="table-footer">
               <span>
-                已选择 <strong>{selected.size}</strong> 位导师
+                已选择 <strong>{selected.size}</strong> 个导师—项目组合
               </span>
               <div>
                 <button
@@ -2076,7 +2632,7 @@ export default function Home() {
                 <div>
                   <strong>这轮背调已经完成</strong>
                   <p>
-                    已调查 {detectiveResults?.results.length || 0} 位导师、
+                    已调查 {detectiveResults?.results.length || 0} 个导师—项目组合、
                     {detectiveResults?.selectedSections.length || 0} 个维度，共保留{" "}
                     {detectiveResults?.evidenceCount || 0} 条证据。下面是本轮结果，不需要再次运行。
                   </p>
@@ -2099,7 +2655,7 @@ export default function Home() {
                     <span className="section-kicker">SELECTED SECTIONS</span>
                     <h2>选择需要调查的信息</h2>
                   </div>
-                  <span>{selected.size} 位导师</span>
+                  <span>{selected.size} 个导师—项目组合</span>
                 </div>
                 <p>
                   {detectiveComplete
@@ -2647,7 +3203,7 @@ export default function Home() {
                   <small>项目目录：{activeProject?.path || projectsRoot}</small>
                 </div>
               )}
-              {!projectReadiness.phase1Ready && (
+              {!modeReadiness(runnerMode).ready && (
                 <button
                   className="runner-input-blocker"
                   type="button"
@@ -2656,9 +3212,11 @@ export default function Home() {
                     window.setTimeout(focusApplicationInput, 100);
                   }}
                 >
-                  <strong>Phase 1 还缺 {projectReadiness.missing.length} 项最低输入</strong>
-                  <span>{projectReadiness.missing.join("、")}</span>
-                  <b>返回填写 →</b>
+                  <strong>
+                    {runnerContent.title}还缺 {modeReadiness(runnerMode).missing.length} 项前置条件
+                  </strong>
+                  <span>{modeReadiness(runnerMode).missing.join("、")}</span>
+                  <b>返回处理 →</b>
                 </button>
               )}
               <p className="safety-note">
@@ -2748,11 +3306,60 @@ export default function Home() {
                           ? "等待授权"
                           : runState === "completed"
                             ? "已完成"
-                            : runState === "stopped"
-                              ? "已停止"
-                              : "运行失败"}
+                            : runState === "partial"
+                              ? "已结束 · 缺少产物"
+                              : runState === "needs_input"
+                                ? "等待补充资料"
+                                : runState === "cancelled"
+                                  ? "已取消"
+                                  : runState === "interrupted"
+                                    ? "已中断"
+                                    : "运行失败"}
                 </span>
               </div>
+              {runState === "partial" && missingArtifacts.length > 0 && (
+                <div className="run-partial-warning" role="status">
+                  <strong>本轮已结束，但尚未产生{runModeArtifactLabel(runnerMode)}</strong>
+                  <ul>
+                    {missingArtifacts.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  <span>可以补充资料后再跑一轮；已经写入 outputs/ 的部分不会被覆盖。</span>
+                </div>
+              )}
+              {requestedInput && (
+                <div className="run-input-request" role="form">
+                  <strong>Agent 需要你补充资料后才能继续</strong>
+                  {requestedInput.reason && <p>{requestedInput.reason}</p>}
+                  {requestedInput.fields.map((field) => (
+                    <label key={field.id} className="run-input-field">
+                      <span>
+                        {field.label || runInputFieldLabels[field.id] || field.id}
+                        {field.required ? " *" : ""}
+                      </span>
+                      <input
+                        value={inputAnswers[field.id] || ""}
+                        placeholder={field.hint || ""}
+                        onChange={(event) =>
+                          setInputAnswers((current) => ({
+                            ...current,
+                            [field.id]: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  ))}
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={inputSaving}
+                    onClick={() => void submitRequestedInput()}
+                  >
+                    {inputSaving ? "正在保存并继续…" : "保存并继续本轮"}
+                  </button>
+                </div>
+              )}
               {runStalled && (
                 <div className="run-stalled-warning">
                   <strong>超过 90 秒没有收到新进度</strong>
@@ -2778,6 +3385,32 @@ export default function Home() {
                 )}
                 <div ref={logEndRef} />
               </div>
+              {technicalEvents.length > 0 && (
+                <div className="technical-log">
+                  <button
+                    type="button"
+                    className="advanced-toggle"
+                    onClick={() => setTechnicalOpen((current) => !current)}
+                  >
+                    {technicalOpen
+                      ? "收起技术细节"
+                      : `技术细节（${technicalEvents.length} 条）`}
+                  </button>
+                  {technicalOpen && (
+                    <pre>
+                      {technicalEvents
+                        .map((event) =>
+                          event.message ||
+                          (typeof event.raw === "string"
+                            ? event.raw
+                            : JSON.stringify(event.raw ?? event)),
+                        )
+                        .join("\n")
+                        .slice(-8000)}
+                    </pre>
+                  )}
+                </div>
+              )}
               {runOutputDirectory && advancedOpen && (
                 <div className="output-path">
                   <span>输出目录</span>
@@ -2792,13 +3425,13 @@ export default function Home() {
                 {(["running", "starting", "waiting_permission"] as RunState[]).includes(
                   runState,
                 ) && (
-                  <button className="stop-button" onClick={stopAgent} disabled={!runId}>
-                    停止任务
+                  <button className="stop-button" onClick={cancelRun} disabled={!runId}>
+                    取消任务
                   </button>
                 )}
                 <button
                   className="primary-button runner-start"
-                  onClick={runAgent}
+                  onClick={() => runAgent()}
                   disabled={
                     runState === "running" ||
                     runState === "starting" ||
@@ -2806,7 +3439,7 @@ export default function Home() {
                     !currentProviderHealth?.installed ||
                     !currentProviderHealth.loggedIn ||
                     !activeProjectId ||
-                    !projectReadiness.phase1Ready ||
+                    !modeReadiness(runnerMode).ready ||
                     !taskPrompt.trim()
                   }
                 >
@@ -2943,6 +3576,72 @@ export default function Home() {
                 disabled={projectDraft.name.trim().length < 2}
               >
                 创建并填写资料
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {deleteProjectTarget && (
+        <div
+          className="project-modal-layer"
+          role="dialog"
+          aria-modal="true"
+          aria-label="彻底删除本地项目"
+        >
+          <button
+            className="runner-backdrop"
+            aria-label="取消删除"
+            onClick={() => !deleteProjectBusy && setDeleteProjectTarget(null)}
+          />
+          <section className="project-modal delete-project-modal">
+            <header>
+              <div>
+                <span className="section-kicker danger-kicker">PERMANENT DELETE</span>
+                <h2>彻底删除本地项目？</h2>
+                <p>项目资料、CV、运行记录和所有结果都会从本机删除，无法恢复。</p>
+              </div>
+              <button
+                onClick={() => setDeleteProjectTarget(null)}
+                aria-label="关闭"
+                disabled={deleteProjectBusy}
+              >
+                ×
+              </button>
+            </header>
+            <div className="project-form delete-project-form">
+              <div className="delete-project-summary">
+                <strong>{deleteProjectTarget.name}</strong>
+                <span>{deleteProjectTarget.path}</span>
+              </div>
+              <label>
+                <span>输入项目名称以确认</span>
+                <input
+                  value={deleteProjectConfirmation}
+                  onChange={(event) => setDeleteProjectConfirmation(event.target.value)}
+                  placeholder={deleteProjectTarget.name}
+                  autoFocus
+                />
+                <small>如果只是不想在侧栏看到它，请取消并选择“从列表隐藏”。</small>
+              </label>
+            </div>
+            <footer>
+              <button
+                className="secondary-button"
+                onClick={() => setDeleteProjectTarget(null)}
+                disabled={deleteProjectBusy}
+              >
+                取消
+              </button>
+              <button
+                className="danger-button"
+                onClick={permanentlyDeleteProject}
+                disabled={
+                  deleteProjectBusy ||
+                  deleteProjectConfirmation !== deleteProjectTarget.name
+                }
+              >
+                {deleteProjectBusy ? "正在删除…" : "彻底删除本地文件"}
               </button>
             </footer>
           </section>

@@ -98,6 +98,26 @@ test("Codex app-server bridge initializes and returns structured approval decisi
 
   bridge.handleLine(
     JSON.stringify({
+      method: "turn/completed",
+      params: { turn: { id: "turn-1", status: "completed" } },
+    }),
+  );
+  const continued = bridge.continueTurn("Continue with degree PhD");
+  await new Promise((resolve) => setImmediate(resolve));
+  const turnStarts = sent.filter((message) => message.method === "turn/start");
+  assert.equal(turnStarts.length, 2);
+  assert.equal(turnStarts[1].params.threadId, "thread-1");
+  assert.equal(turnStarts[1].params.input[0].text, "Continue with degree PhD");
+  bridge.handleLine(
+    JSON.stringify({
+      id: turnStarts[1].id,
+      result: { turn: { id: "turn-2" } },
+    }),
+  );
+  await continued;
+
+  bridge.handleLine(
+    JSON.stringify({
       id: 77,
       method: "item/commandExecution/requestApproval",
       params: {

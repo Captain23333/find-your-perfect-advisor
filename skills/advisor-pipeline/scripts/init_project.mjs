@@ -18,6 +18,7 @@ import {
   normalizeStatus,
   validateProjectMetadata,
 } from "./project-contract.mjs";
+import { withProjectFileLock } from "./project-file-lock.mjs";
 
 async function exists(path) {
   try {
@@ -65,7 +66,7 @@ async function readJson(path) {
   }
 }
 
-export async function initializeProjectDirectory(
+async function initializeProjectDirectoryUnlocked(
   root,
   { checkOnly = false, now = new Date().toISOString() } = {},
 ) {
@@ -199,6 +200,19 @@ export async function initializeProjectDirectory(
     project: normalizedProject,
     status: normalizedStatus,
   };
+}
+
+export async function initializeProjectDirectory(
+  root,
+  options = {},
+) {
+  const projectRoot = resolve(root);
+  if (options.checkOnly) {
+    return initializeProjectDirectoryUnlocked(projectRoot, options);
+  }
+  return withProjectFileLock(projectRoot, () =>
+    initializeProjectDirectoryUnlocked(projectRoot, options),
+  );
 }
 
 async function main() {

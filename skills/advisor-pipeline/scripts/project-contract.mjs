@@ -21,6 +21,47 @@ export const DETECTIVE_SECTIONS = [
   "collaboration_industry_network",
 ];
 
+// The single ordered catalog both the Web checkboxes and the CLI menu render.
+export const DETECTIVE_SECTION_CATALOG = [
+  { id: "identity_current_role", label: "基础身份与当前职位", defaultSelected: true },
+  { id: "recent_research", label: "最近三年研究兴趣与方向", defaultSelected: true },
+  {
+    id: "current_projects_recruiting",
+    label: "近期项目与招生状态",
+    defaultSelected: true,
+  },
+  { id: "research_output_trend", label: "研究产出与趋势", defaultSelected: false },
+  { id: "group_members_outcomes", label: "课题组成员及去向", defaultSelected: false },
+  { id: "guidance_group_ecology", label: "指导环境与组内生态", defaultSelected: false },
+  { id: "work_style_pressure", label: "工作方式与压力", defaultSelected: false },
+  {
+    id: "resources_career_support",
+    label: "资源、funding、署名与职业支持",
+    defaultSelected: false,
+  },
+  {
+    id: "integrity_public_controversies",
+    label: "学术诚信与公开争议",
+    defaultSelected: false,
+  },
+  {
+    id: "international_student_support",
+    label: "国际学生支持",
+    defaultSelected: false,
+  },
+  {
+    id: "collaboration_industry_network",
+    label: "合作者、产业和职业网络",
+    defaultSelected: false,
+  },
+];
+
+export function investigationCostLevel(workUnits) {
+  if (workUnits <= 8) return "low";
+  if (workUnits <= 24) return "medium";
+  return "high";
+}
+
 export const COMMUNITY_SECTION_IDS = [
   "guidance_group_ecology",
   "work_style_pressure",
@@ -413,6 +454,94 @@ export function normalizeProjectMetadata(
   }
   delete normalized.shortlist_target;
   return normalized;
+}
+
+// Every stage has its own preconditions. Checking `phase1Ready` for all of
+// them locked migrated projects — ones that already have candidates and
+// detective results but a stale CV path — out of Phase 2 and Phase 3.
+export const RUN_MODE_IDS = ["finder", "finder_objective", "detective", "ranking"];
+
+export function readinessForProject({
+  metadata,
+  candidates = [],
+  detectiveResults = null,
+  cvValid = false,
+} = {}) {
+  const source = metadata && typeof metadata === "object" ? metadata : {};
+  const hasInterests = Array.isArray(source.interests) && source.interests.length > 0;
+  const hasCv = Boolean(cvValid);
+  const checks = [
+    { key: "target", label: "填写目标院校或地区范围", complete: Boolean(source.target) },
+    {
+      key: "matching_signal",
+      label: "上传 CV 或填写至少一个研究兴趣",
+      complete: hasCv || hasInterests,
+    },
+  ];
+  const objectiveChecks = [
+    { key: "degree", label: "填写目标学位", complete: Boolean(source.degree) },
+    { key: "season", label: "填写申请季", complete: Boolean(source.season) },
+  ];
+  const phase1Ready = checks.every((item) => item.complete);
+  const objectiveReady = objectiveChecks.every((item) => item.complete);
+
+  const candidateList = Array.isArray(candidates) ? candidates : [];
+  const usableCandidates = candidateList.filter((candidate) =>
+    String(candidate?.advisorProgramId || "").trim(),
+  );
+  const confirmationCurrent = isInvestigationConfirmationCurrent(source.investigation);
+  const confirmed = normalizeInvestigation(source.investigation).confirmed;
+  const detectiveDone =
+    Array.isArray(detectiveResults?.results) && detectiveResults.results.length > 0;
+
+  const finderMissing = checks
+    .filter((item) => !item.complete)
+    .map((item) => item.label);
+  const objectiveMissing = objectiveChecks
+    .filter((item) => !item.complete)
+    .map((item) => item.label);
+
+  const finderObjectiveMissing = [
+    ...finderMissing,
+    ...(usableCandidates.length ? [] : ["先完成 Phase 1 的导师发现"]),
+    ...objectiveMissing,
+  ];
+
+  const detectiveMissing = [
+    ...(usableCandidates.length ? [] : ["先产生带稳定 ID 的候选导师"]),
+    ...(confirmed ? [] : ["最终确认本次背调配置"]),
+    ...(confirmed && !confirmationCurrent
+      ? ["调查选择已变化，请重新最终确认"]
+      : []),
+  ];
+
+  const rankingMissing = detectiveDone ? [] : ["先完成一轮导师背调并生成结果"];
+
+  const modes = {
+    finder: { ready: !finderMissing.length, missing: finderMissing },
+    finder_objective: {
+      ready: !finderObjectiveMissing.length,
+      missing: finderObjectiveMissing,
+    },
+    detective: { ready: !detectiveMissing.length, missing: detectiveMissing },
+    ranking: { ready: !rankingMissing.length, missing: rankingMissing },
+  };
+
+  return {
+    ready: phase1Ready,
+    phase1Ready,
+    objectiveReady,
+    completed: checks.filter((item) => item.complete).length,
+    total: checks.length,
+    checks,
+    missing: finderMissing,
+    objectiveChecks,
+    objectiveMissing,
+    matchingSignal: hasCv ? "cv" : hasInterests ? "interests" : "none",
+    interestWeightTotal: hasInterests ? 100 : 0,
+    cvValid: hasCv,
+    modes,
+  };
 }
 
 export function createStatus(now = new Date().toISOString()) {

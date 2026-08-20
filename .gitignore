@@ -12,3 +12,6 @@ skills/advisor-detective/references/.community-*.tmp
 
 # macOS Finder metadata
 .DS_Store
+
+# Session handoff notes; not part of the shipped documentation.
+HANDOFF.md

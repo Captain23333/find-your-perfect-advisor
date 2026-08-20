@@ -1,12 +1,17 @@
 import { createServer } from "node:http";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { existsSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { createProjectStore } from "./project-store.mjs";
+import {
+  CV_ALLOWED_EXTENSIONS,
+  CV_MAX_BYTES,
+  createProjectStore,
+  cvExtension,
+} from "./project-store.mjs";
 import {
   communityRefreshEligibility,
 } from "../../skills/advisor-pipeline/scripts/project-contract.mjs";
@@ -23,14 +28,31 @@ import {
   getCommunityCacheStatus,
   syncCommunityCache,
 } from "./community-cache.mjs";
+import { classifyProviderLine } from "./run-events.mjs";
+import {
+  RUN_EVENT_BUFFER_LIMIT,
+  appendToBuffer,
+  createRunRegistry,
+  markOrphanedRunsInterrupted,
+  runSnapshot,
+} from "./run-registry.mjs";
+import {
+  RUN_MODES,
+  RUN_MODE_LABELS,
+  extractInputRequest,
+  parseInputRequest,
+  verifyRunArtifacts,
+} from "./run-artifacts.mjs";
 
 const runtimeDirectory = dirname(fileURLToPath(import.meta.url));
-const projectRoot = resolve(runtimeDirectory, "../..");
+const projectRoot = process.env.ADVISOR_ATLAS_PROJECT_ROOT
+  ? resolve(process.env.ADVISOR_ATLAS_PROJECT_ROOT)
+  : resolve(runtimeDirectory, "../..");
 const dataRoot = resolve(projectRoot, ".advisor-atlas");
 const host = process.env.ADVISOR_ATLAS_RUNTIME_HOST || "127.0.0.1";
 const hostForUrl = host.includes(":") ? `[${host}]` : host;
 const port = Number(process.env.ADVISOR_ATLAS_RUNTIME_PORT || 4318);
-const activeRuns = new Map();
+const activeRuns = createRunRegistry();
 const projectStore = createProjectStore(projectRoot);
 const bundledCodexPath = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const codexExecutable =
@@ -41,6 +63,7 @@ let customProviderSession = null;
 
 await mkdir(dataRoot, { recursive: true });
 await projectStore.ensureDefaultProject();
+await markOrphanedRunsInterrupted(projectStore);
 
 function corsHeaders(origin) {
   let allowedOrigin = "http://localhost:3000";
@@ -298,16 +321,21 @@ function safeFilename(value) {
 }
 
 function normalizeEvent(provider, line, stream) {
-  if (
-    provider !== "claude" &&
-    stream === "stderr" &&
-    /Reading additional input from stdin|codex_core_plugins::manifest|codex_core_skills::loader|failed to load models cache|failed to renew cache TTL|Unknown model .*fallback model metadata|model personality requested/.test(
-      line,
-    )
-  ) {
+  const level = classifyProviderLine(provider, line, stream);
+  if (provider !== "claude" && level === "diagnostic" && stream === "stderr") {
     return {
       type: "diagnostic",
       source: provider,
+      level: "diagnostic",
+      message: "",
+      raw: line,
+    };
+  }
+  if (level === "connection_retry") {
+    return {
+      type: "connection.retry",
+      source: provider,
+      level: "warning",
       message: "",
       raw: line,
     };
@@ -365,6 +393,7 @@ function normalizeEvent(provider, line, stream) {
   return {
     type: parsed.type || stream,
     source: provider,
+    level: stream === "stderr" ? (level === "error" ? "error" : "diagnostic") : "progress",
     message,
     raw: parsed,
   };
@@ -489,6 +518,7 @@ function requestRunPermission(run, providerPermission, respond) {
   run.emit({
     type: "permission.requested",
     source: "runtime",
+    level: "action_required",
     message: `${permission.title} Agent 已暂停，等待你的选择。`,
     permission,
   });
@@ -523,6 +553,45 @@ function resolveRunPermission(runId, permissionId, decision) {
   return { ok: true, status: 200 };
 }
 
+async function writeRunMetadata(runDirectory, metadata) {
+  await writeFile(
+    resolve(runDirectory, "metadata.json"),
+    `${JSON.stringify(metadata, null, 2)}\n`,
+  );
+}
+
+function attachRunStream(run, response, origin) {
+  response.writeHead(200, {
+    ...corsHeaders(origin),
+    "content-type": "application/x-ndjson; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  // Replay first so a reopened panel shows the same log it had before, then
+  // hand the caller everything it needs to restore its own UI state.
+  for (const line of run.eventBuffer) {
+    if (!response.destroyed) response.write(line);
+  }
+  const attached = {
+    runId: run.id,
+    at: new Date().toISOString(),
+    type: "run.attached",
+    source: "runtime",
+    message: "已重新接入正在运行的任务",
+    status: run.metadata.status,
+    mode: run.metadata.mode,
+    outputDirectory: run.metadata.outputDirectory,
+    pendingPermissions: [...run.permissions.values()].map(
+      (pending) => pending.permission,
+    ),
+    requestedInput: run.requestedInput || run.metadata.requestedInput || null,
+  };
+  if (!response.destroyed) response.write(`${JSON.stringify(attached)}\n`);
+  run.subscribers.add(response);
+  response.on("close", () => run.subscribers.delete(response));
+}
+
 async function listRecentRuns(projectId) {
   const project = await projectStore.getProject(projectId);
   const runsRoot = resolve(project.path, "runs");
@@ -549,6 +618,15 @@ async function startRun(request, response, origin) {
   const provider = body.provider;
   const projectId = String(body.projectId || "").trim();
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+  const mode = String(body.mode || "finder").trim();
+  const confirmedRevision = Number.isInteger(body.confirmedRevision)
+    ? body.confirmedRevision
+    : null;
+
+  if (!RUN_MODES.includes(mode)) {
+    sendJson(response, 400, { error: "未知的运行阶段" }, origin);
+    return;
+  }
 
   if (!["codex", "claude", "custom"].includes(provider)) {
     sendJson(
@@ -563,18 +641,48 @@ async function startRun(request, response, origin) {
     sendJson(response, 400, { error: "请选择一个申请项目" }, origin);
     return;
   }
+  const runningForProject = activeRuns.activeForProject(projectId);
+  if (runningForProject) {
+    sendJson(
+      response,
+      409,
+      {
+        error: "该申请项目已有任务正在运行，请先接入或取消它",
+        activeRun: runSnapshot(runningForProject),
+      },
+      origin,
+    );
+    return;
+  }
   if (!prompt || prompt.length > 60_000) {
     sendJson(response, 400, { error: "请输入有效任务指令（最多 60,000 字）" }, origin);
     return;
   }
   const project = await projectStore.getProject(projectId);
-  if (!project.readiness.phase1Ready) {
+  if (
+    mode === "detective" &&
+    confirmedRevision !== null &&
+    confirmedRevision !== project.investigation?.confirmed?.revision
+  ) {
+    sendJson(
+      response,
+      409,
+      { error: "调查配置已更新，请刷新项目后按当前确认版本重新启动" },
+      origin,
+    );
+    return;
+  }
+  // Each stage has its own preconditions; Phase 2 and Phase 3 must stay usable
+  // on a project whose Phase 1 inputs are no longer complete.
+  const modeReadiness = project.readiness.modes?.[mode];
+  if (modeReadiness && !modeReadiness.ready) {
     sendJson(
       response,
       422,
       {
-        error: `开始 Phase 1 前，请先完成：${project.readiness.missing.join("、")}`,
-        missingInputs: project.readiness.missing,
+        error: `开始${RUN_MODE_LABELS[mode]}前，请先完成：${modeReadiness.missing.join("、")}`,
+        missingInputs: modeReadiness.missing,
+        mode,
         readiness: project.readiness,
       },
       origin,
@@ -632,6 +740,11 @@ async function startRun(request, response, origin) {
    每项必须可追溯到真实检索结果；不确定字段要标为待核实，不能补写演示人物。
 8. 本次项目最终确认的调查配置为：${JSON.stringify(project.investigation?.confirmed || null, null, 2)}
    必须使用其中精确的 selectedAdvisorProgramIds 和 selectedSections，不能只按人数或 Top N 猜测。
+   写 outputs/detective-results.json 时，顶层必须带上 "confirmedRevision": ${
+     project.investigation?.confirmed?.revision ?? "null"
+   } 和 "confirmedFingerprint": ${JSON.stringify(
+     project.investigation?.confirmed?.fingerprint || null,
+   )}，以及 "generatedAt"。每个已选维度都必须给出结论，或显式写成 {"status":"not_completed","summary":"原因"}；不能留空。
 9. Web 社区资料缓存目录为：${resolve(project.path, "community-cache")}。只有 communitySources.consented 为 true 且相关维度被选中时才可读取；searchReady 不为 true 时必须写“未完成检索”。
 10. Phase 1 目标 shortlist 数量为 ${project.shortlistTarget}。发现池大小必须服从用户范围：如果是一个明确学校、院系、研究所或实验室，覆盖其官方名册中合理相关且具备指导资格的人，不得为了凑数硬扩到 30，通常以约 ${Math.min(
     60,
@@ -640,7 +753,10 @@ async function startRun(request, response, origin) {
     60,
     project.shortlistTarget * 3,
   )} 位为目标。再按研究匹配与客观条件筛到目标数量；不得把 Phase 2 的社区风评、组内生态或全面社交调查提前到 Phase 1。
-11. 不要执行 git commit、git push、发布、发送邮件或任何对外提交操作。`;
+11. 不要执行 git commit、git push、发布、发送邮件或任何对外提交操作。
+12. 如果缺少继续所需的申请资料（例如目标学位或申请季），不要在对话里提问后空转，也不要自行假设。请单独输出一行 JSON：
+   {"type":"input.requested","reason":"简短说明","fields":[{"id":"degree","label":"目标学位","required":true}]}
+   允许的 field id 只有 degree、season、target、interests、shortlistTarget。输出后结束本轮，控制台会收集答案并让你继续。`;
 
   const command =
     provider === "codex"
@@ -652,6 +768,7 @@ async function startRun(request, response, origin) {
         ? {
             executable: "claude",
             args: [
+              "--print",
               "--input-format",
               "stream-json",
               "--output-format",
@@ -687,17 +804,22 @@ async function startRun(request, response, origin) {
     id: runId,
     projectId: project.id,
     provider,
+    mode,
     status: "running",
+    // Which confirmation snapshot this run was launched against. Artifacts that
+    // belong to an older revision must not count as this run finishing.
+    confirmedRevision:
+      confirmedRevision ?? project.investigation?.confirmed?.revision ?? null,
+    confirmedFingerprint: project.investigation?.confirmed?.fingerprint || null,
     prompt,
     startedAt: new Date().toISOString(),
     finishedAt: null,
     exitCode: null,
+    missingArtifacts: [],
+    requestedInput: null,
     outputDirectory: runDirectory,
   };
-  await writeFile(
-    resolve(runDirectory, "metadata.json"),
-    JSON.stringify(metadata, null, 2),
-  );
+  await writeRunMetadata(runDirectory, metadata);
   const eventLog = createWriteStream(resolve(runDirectory, "events.ndjson"), {
     flags: "a",
   });
@@ -710,15 +832,51 @@ async function startRun(request, response, origin) {
     "x-accel-buffering": "no",
   });
 
-  const emit = (event) => {
+  const eventBuffer = [];
+  const subscribers = new Set([response]);
+  let run = null;
+  let agentMessageBuffer = "";
+  response.on("close", () => subscribers.delete(response));
+
+  const writeEvent = (event) => {
     const line = `${JSON.stringify({ runId, at: new Date().toISOString(), ...event })}\n`;
     eventLog.write(line);
-    if (!response.destroyed) response.write(line);
+    appendToBuffer(eventBuffer, line, RUN_EVENT_BUFFER_LIMIT);
+    for (const subscriber of subscribers) {
+      if (!subscriber.destroyed) subscriber.write(line);
+    }
+  };
+
+  const emit = (event) => {
+    if (
+      run &&
+      !run.requestedInput &&
+      event.source !== "runtime" &&
+      typeof event.message === "string"
+    ) {
+      agentMessageBuffer = `${agentMessageBuffer}${event.message}`.slice(-20_000);
+      const inputRequest =
+        parseInputRequest(event.raw) || extractInputRequest(agentMessageBuffer);
+      if (inputRequest) {
+        run.requestedInput = inputRequest;
+        writeEvent({
+          type: "input.requested",
+          source: "runtime",
+          level: "action_required",
+          message:
+            inputRequest.reason ||
+            "Agent 需要你补充申请资料后才能继续客观筛选",
+          requestedInput: inputRequest,
+        });
+      }
+    }
+    writeEvent(event);
   };
 
   emit({
     type: "run.started",
     source: "runtime",
+    level: "progress",
     message: `已通过 ${
       provider === "codex"
         ? "Codex"
@@ -745,21 +903,52 @@ async function startRun(request, response, origin) {
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  const run = {
+  run = {
     id: runId,
     child,
     response,
     metadata,
+    runDirectory,
+    projectPath: project.path,
+    eventBuffer,
+    subscribers,
     eventLog,
     finished: false,
     stopped: false,
     protocolCompleted: false,
     protocolError: null,
+    requestedInput: null,
+    retryCount: 0,
     permissions: new Map(),
     sessionPermissionKeys: new Set(),
     emit,
   };
-  activeRuns.set(runId, run);
+  activeRuns.register(run);
+
+  async function finishOrPauseTurn({ succeeded, error = null }) {
+    run.protocolCompleted = succeeded;
+    run.protocolError = error;
+    if (succeeded && run.requestedInput && !run.stopped) {
+      try {
+        metadata.status = "needs_input";
+        metadata.requestedInput = run.requestedInput;
+        await writeRunMetadata(runDirectory, metadata);
+        emit({
+          type: "run.waiting_input",
+          source: "runtime",
+          level: "action_required",
+          message: "Agent 会话已暂停，补充资料后将从同一会话继续",
+          status: "needs_input",
+          requestedInput: run.requestedInput,
+        });
+        return;
+      } catch (metadataError) {
+        run.protocolCompleted = false;
+        run.protocolError = `无法保存等待输入状态：${metadataError.message}`;
+      }
+    }
+    child.kill("SIGTERM");
+  }
 
   const requestPermission = (permission, respond) =>
     requestRunPermission(run, permission, respond);
@@ -774,12 +963,31 @@ async function startRun(request, response, origin) {
           emit,
           requestPermission,
           onTurnComplete: ({ status, error }) => {
-            run.protocolCompleted = status === "completed";
-            run.protocolError = error;
-            child.kill("SIGTERM");
+            void finishOrPauseTurn({
+              succeeded: status === "completed",
+              error,
+            });
           },
         })
       : null;
+
+  run.continueTurn = async (continuationPrompt) => {
+    run.protocolCompleted = false;
+    run.protocolError = null;
+    agentMessageBuffer = "";
+    if (provider === "claude") {
+      if (
+        !writeJsonLine(child.stdin, {
+          type: "user",
+          message: { role: "user", content: continuationPrompt },
+        })
+      ) {
+        throw new Error("Claude 会话已经关闭，无法继续");
+      }
+      return;
+    }
+    await codexBridge.continueTurn(continuationPrompt);
+  };
 
   function handleProviderLine(line, streamName) {
     if (streamName === "stdout" && codexBridge?.handleLine(line)) return;
@@ -813,13 +1021,42 @@ async function startRun(request, response, origin) {
         return;
       }
       if (parsed?.type === "result") {
-        run.protocolCompleted = !parsed.is_error;
-        run.protocolError = parsed.is_error ? parsed.result || "Claude 任务失败" : null;
-        setTimeout(() => child.kill("SIGTERM"), 25).unref();
+        void finishOrPauseTurn({
+          succeeded: !parsed.is_error,
+          error: parsed.is_error ? parsed.result || "Claude 任务失败" : null,
+        });
       }
     }
 
     const event = normalizeEvent(provider, line, streamName);
+    if (event.type === "connection.retry") {
+      // Repeated reconnect noise collapses into one counted line instead of a
+      // wall of HTTP 502 / MCP failures on the main progress log.
+      run.retryCount = (run.retryCount || 0) + 1;
+      emit({
+        type: "connection.retry",
+        source: "runtime",
+        level: "warning",
+        message: `模型工具连接不稳定，正在重试（第 ${run.retryCount} 次）`,
+        retryCount: run.retryCount,
+        raw: event.raw,
+      });
+      return;
+    }
+    const inputRequest =
+      parseInputRequest(event.raw) || extractInputRequest(event.message);
+    if (inputRequest && !run.requestedInput) {
+      run.requestedInput = inputRequest;
+      emit({
+        type: "input.requested",
+        source: "runtime",
+        level: "action_required",
+        message:
+          inputRequest.reason ||
+          "Agent 需要你补充申请资料后才能继续客观筛选",
+        requestedInput: inputRequest,
+      });
+    }
     if (event.message || streamName === "stderr") emit(event);
   }
 
@@ -869,6 +1106,7 @@ async function startRun(request, response, origin) {
     emit({
       type: "run.error",
       source: "runtime",
+      level: "error",
       message: error.message,
     });
   });
@@ -884,35 +1122,129 @@ async function startRun(request, response, origin) {
       }
     }
     run.permissions.clear();
+
+    const modelSucceeded =
+      run.protocolCompleted || (provider === "claude" && code === 0);
+    // The model returning a sentence is not the same as the phase producing its
+    // artifact, so a "successful" turn still has to be checked against disk.
+    const verification = modelSucceeded
+      ? await verifyRunArtifacts({
+          projectPath: project.path,
+          mode,
+          confirmedRevision: metadata.confirmedRevision,
+          confirmedFingerprint: metadata.confirmedFingerprint,
+          selectedAdvisorProgramIds:
+            project.investigation?.confirmed?.selectedAdvisorProgramIds || [],
+          selectedSections:
+            project.investigation?.confirmed?.selectedSections || [],
+          startedAt: metadata.startedAt,
+        }).catch((error) => ({
+          complete: false,
+          missing: [`产物校验失败：${error.message}`],
+        }))
+      : { complete: false, missing: [] };
+
+    const waitingSessionExited =
+      metadata.status === "needs_input" && Boolean(run.requestedInput);
     metadata.status = run.stopped
-      ? "stopped"
-      : run.protocolCompleted || (provider === "claude" && code === 0)
-        ? "completed"
+      ? "cancelled"
+      : waitingSessionExited
+        ? "interrupted"
+      : modelSucceeded
+        ? verification.complete
+          ? "completed"
+          : run.requestedInput
+            ? "needs_input"
+            : "partial"
         : "failed";
+    metadata.missingArtifacts = verification.missing || [];
+    metadata.requestedInput = run.requestedInput || null;
     metadata.finishedAt = new Date().toISOString();
     metadata.exitCode = code;
     metadata.signal = signal;
-    await writeFile(
-      resolve(runDirectory, "metadata.json"),
-      JSON.stringify(metadata, null, 2),
-    );
+    await writeRunMetadata(runDirectory, metadata);
     emit({
       type: "run.finished",
       source: "runtime",
+      level: metadata.status === "completed" ? "progress" : "warning",
       message:
         metadata.status === "completed"
           ? "本地任务已完成"
-          : metadata.status === "stopped"
-            ? "本地任务已停止"
-            : run.protocolError ||
-              `本地任务异常结束（退出码 ${code ?? "unknown"}）`,
+          : metadata.status === "cancelled"
+            ? "本地任务已取消"
+            : metadata.status === "interrupted"
+              ? "Agent 会话在等待补充资料时意外关闭，请检查已有产物后重新启动"
+            : metadata.status === "needs_input"
+              ? "本轮已结束，Agent 需要你补充信息后才能继续"
+              : metadata.status === "partial"
+                ? `本轮已结束，但尚未产生${RUN_MODE_LABELS[mode]}`
+                : run.protocolError ||
+                  `本地任务异常结束（退出码 ${code ?? "unknown"}）`,
       status: metadata.status,
+      mode,
+      missingArtifacts: metadata.missingArtifacts,
+      requestedInput: metadata.requestedInput,
       exitCode: code,
     });
     eventLog.end();
-    if (!response.destroyed) response.end();
-    activeRuns.delete(runId);
+    for (const subscriber of subscribers) {
+      if (!subscriber.destroyed) subscriber.end();
+    }
+    subscribers.clear();
+    activeRuns.release(runId);
   });
+}
+
+async function continueRunWithInput(runId, body) {
+  const run = activeRuns.get(runId);
+  if (!run || run.finished) {
+    return { ok: false, status: 404, error: "运行任务不存在或已经结束" };
+  }
+  if (!run.requestedInput || run.metadata.status !== "needs_input") {
+    return { ok: false, status: 409, error: "当前任务没有等待补充资料" };
+  }
+  const answers = body?.answers && typeof body.answers === "object" ? body.answers : {};
+  const missing = run.requestedInput.fields.filter(
+    (field) => field.required && !String(answers[field.id] || "").trim(),
+  );
+  if (missing.length) {
+    return {
+      ok: false,
+      status: 422,
+      error: `还需要填写：${missing.map((field) => field.label || field.id).join("、")}`,
+    };
+  }
+
+  const answeredLines = run.requestedInput.fields
+    .map((field) => {
+      const value = String(answers[field.id] || "").trim();
+      return value ? `- ${field.label || field.id}：${value}` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
+  const continuationPrompt = `用户已补充以下资料：\n${answeredLines}\n\n请在当前会话中继续本阶段，复用已经完成的工作，不要重新执行已有检索。`;
+  const previousRequest = run.requestedInput;
+  run.requestedInput = null;
+  run.metadata.requestedInput = null;
+  run.metadata.status = "running";
+  try {
+    await writeRunMetadata(run.runDirectory, run.metadata);
+    await run.continueTurn(continuationPrompt);
+    run.emit({
+      type: "run.continued",
+      source: "runtime",
+      level: "progress",
+      message: "资料已保存，Agent 正从同一会话继续",
+      status: "running",
+    });
+    return { ok: true, status: 202 };
+  } catch (error) {
+    run.requestedInput = previousRequest;
+    run.metadata.requestedInput = previousRequest;
+    run.metadata.status = "needs_input";
+    await writeRunMetadata(run.runDirectory, run.metadata).catch(() => {});
+    return { ok: false, status: 409, error: error.message || "Agent 会话无法继续" };
+  }
 }
 
 const server = createServer(async (request, response) => {
@@ -969,6 +1301,33 @@ const server = createServer(async (request, response) => {
         { project: await projectStore.updateProject(projectMatch[1], body) },
         origin,
       );
+      return;
+    }
+    if (request.method === "DELETE" && projectMatch) {
+      const projectId = projectMatch[1];
+      const running = activeRuns.activeForProject(projectId);
+      if (running) {
+        sendJson(
+          response,
+          409,
+          { error: "这个项目仍有任务正在运行，请先取消或等待任务结束" },
+          origin,
+        );
+        return;
+      }
+      const project = await projectStore.getProject(projectId);
+      const body = await readJson(request);
+      if (String(body.confirmName || "") !== project.name) {
+        sendJson(
+          response,
+          422,
+          { error: "项目名称不匹配，未删除任何本地文件" },
+          origin,
+        );
+        return;
+      }
+      const deleted = await projectStore.deleteProject(projectId);
+      sendJson(response, 200, { deleted }, origin);
       return;
     }
 
@@ -1060,9 +1419,7 @@ const server = createServer(async (request, response) => {
         response,
         200,
         {
-          active: [...activeRuns.values()]
-            .map((run) => run.metadata)
-            .filter((run) => run.projectId === projectId),
+          active: activeRuns.activeList(projectId).map((run) => runSnapshot(run)),
           recent: await listRecentRuns(projectId),
         },
         origin,
@@ -1078,20 +1435,60 @@ const server = createServer(async (request, response) => {
       }
       const project = await projectStore.getProject(projectId);
       const fileName = safeFilename(request.headers["x-file-name"]);
+      const extension = cvExtension(fileName);
+      if (!CV_ALLOWED_EXTENSIONS.has(extension)) {
+        sendJson(
+          response,
+          415,
+          { error: "只支持 PDF / DOC / DOCX / TXT / MD 格式的 CV" },
+          origin,
+        );
+        return;
+      }
       const fileId = randomUUID();
-      const buffer = await readBuffer(request);
+      const buffer = await readBuffer(request, CV_MAX_BYTES);
       if (!buffer.length) {
         sendJson(response, 400, { error: "文件内容为空" }, origin);
         return;
       }
-      const filePath = resolve(project.path, "inputs", `${fileId}-${fileName}`);
-      await writeFile(filePath, buffer);
-      const updatedProject = await projectStore.setProjectCv(projectId, {
-        name: fileName,
-        path: filePath,
-        size: buffer.length,
-        type: request.headers["x-file-type"] || "application/octet-stream",
-      });
+      if (buffer.length > CV_MAX_BYTES) {
+        sendJson(
+          response,
+          413,
+          {
+            error: `CV 超过 ${Math.round(CV_MAX_BYTES / (1024 * 1024))} MB 上限`,
+          },
+          origin,
+        );
+        return;
+      }
+      await mkdir(resolve(project.path, "inputs"), { recursive: true });
+      const relativePath = `inputs/${fileId}-${fileName}`;
+      const filePath = resolve(project.path, relativePath);
+      // Write to a scratch name first: if validation fails, the previously
+      // saved CV is still the one recorded in project.json.
+      const stagingPath = `${filePath}.uploading`;
+      await writeFile(stagingPath, buffer);
+      let updatedProject = null;
+      try {
+        await rename(stagingPath, filePath);
+        updatedProject = await projectStore.setProjectCv(projectId, {
+          name: fileName,
+          path: relativePath,
+          size: buffer.length,
+          type: request.headers["x-file-type"] || "application/octet-stream",
+        });
+      } catch (error) {
+        await unlink(stagingPath).catch(() => {});
+        await unlink(filePath).catch(() => {});
+        sendJson(
+          response,
+          error.code === "INVALID_CV" ? 422 : 500,
+          { error: error.message || "CV 保存失败，已保留原有 CV" },
+          origin,
+        );
+        return;
+      }
       sendJson(
         response,
         201,
@@ -1100,7 +1497,8 @@ const server = createServer(async (request, response) => {
           name: fileName,
           size: buffer.length,
           type: request.headers["x-file-type"] || "application/octet-stream",
-          path: filePath,
+          path: relativePath,
+          absolutePath: filePath,
           readiness: updatedProject.readiness,
         },
         origin,
@@ -1129,6 +1527,36 @@ const server = createServer(async (request, response) => {
         result.ok ? { ok: true } : { error: result.error },
         origin,
       );
+      return;
+    }
+
+    const continueMatch = requestUrl.pathname.match(
+      /^\/api\/runs\/([^/]+)\/continue$/,
+    );
+    if (request.method === "POST" && continueMatch) {
+      const result = await continueRunWithInput(
+        continueMatch[1],
+        await readJson(request),
+      );
+      sendJson(
+        response,
+        result.status,
+        result.ok ? { ok: true } : { error: result.error },
+        origin,
+      );
+      return;
+    }
+
+    const runStreamMatch = requestUrl.pathname.match(
+      /^\/api\/runs\/([^/]+)\/stream$/,
+    );
+    if (request.method === "GET" && runStreamMatch) {
+      const run = activeRuns.get(runStreamMatch[1]);
+      if (!run || run.finished) {
+        sendJson(response, 404, { error: "运行任务不存在或已经结束" }, origin);
+        return;
+      }
+      attachRunStream(run, response, origin);
       return;
     }
 
@@ -1161,7 +1589,8 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Advisor Atlas runtime: http://${hostForUrl}:${port}`);
+  const boundPort = server.address()?.port ?? port;
+  console.log(`Advisor Atlas runtime: http://${hostForUrl}:${boundPort}`);
   console.log(`Project root: ${projectRoot}`);
 });
 

@@ -118,21 +118,30 @@ Finder does not authorize Detective research.
 
 For direct CLI users, perform the following steps in order:
 
-1. Read `outputs/candidates.json` and display a numbered shortlist. Each row
-   must show advisor name, institution, official program, research-fit score,
-   objective feasibility, and the stable `advisorProgramId`. Keep ineligible
-   rows visible with their reasons.
-2. Ask the user to choose exact advisor-program rows by number or stable ID.
+1. Render the menu with the deterministic script, never by hand:
+
+   ```bash
+   node .agents/skills/advisor-pipeline/scripts/render_investigation_menu.mjs --root "$PWD"
+   ```
+
+   It prints the candidate table (including the stable `advisorProgramId`
+   column), all 11 ordered sections with their defaults, and the current work
+   unit / cost level. Show its output verbatim. You may explain it, but you must
+   not reorder, rename, drop, or summarize away any column or row — a
+   free-form menu has already shipped without `advisorProgramId`.
+2. **Read scope while selecting**: only `project.json`,
+   `outputs/candidates.json`, and the dimension catalog. Do not read
+   `outputs/advisor_records.json`, `outputs/evidence.json`, previous detective
+   results, or the community cache, and make no network requests until the
+   user has confirmed.
+3. Ask the user to choose exact advisor-program rows by number or stable ID.
    Do not infer the choice from ranking, Top N, or a count.
-3. Read `../advisor-detective/references/investigation-sections.md` and display
-   all 11 sections in its canonical order. Mark the first three as selected by
-   default and the other eight as optional.
 4. Let the user keep the defaults, add sections, remove sections, select all,
    or select none. If a default section is removed, warn that the background
    check may be incomplete or stale before accepting the removal.
-5. Show the same qualitative cost used by the Web UI, calculated as selected
-   advisor-program rows multiplied by selected sections: `<= 8` is low,
-   `9-24` is medium, and `> 24` is high.
+5. The script already prints the Web-equivalent cost level, calculated as
+   selected advisor-program rows multiplied by selected sections: `<= 8` is
+   low, `9-24` is medium, and `> 24` is high.
 6. If a community-relevant section listed in the canonical section reference
    is selected, ask separately whether the user consents to downloading and
    parsing third-party community material in this local project. Default to no.

@@ -283,9 +283,15 @@ export function createCodexAppServerBridge({
       source: "codex",
       message: `Codex 会话已创建：${threadId}`,
     });
+    await startTurn(prompt);
+  }
+
+  async function startTurn(text) {
+    if (!threadId) throw new Error("Codex 会话尚未创建");
+    turnFinished = false;
     await request("turn/start", {
       threadId,
-      input: [{ type: "text", text: prompt, text_elements: [] }],
+      input: [{ type: "text", text, text_elements: [] }],
     });
   }
 
@@ -401,6 +407,7 @@ export function createCodexAppServerBridge({
 
   return {
     start,
+    continueTurn: startTurn,
     handleLine,
     fail,
     get threadId() {

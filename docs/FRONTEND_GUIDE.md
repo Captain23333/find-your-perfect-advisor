@@ -63,11 +63,32 @@ Phase 3 复用 Phase 1 和 Phase 2 已有信息，不应重新执行导师发现
 
 前端不能只根据 `status.json` 中的阶段名称判断完成，因为中断的 Agent 可能已经提前更新状态。
 
-- Phase 1 完成：`outputs/candidates.json` 有真实候选。
-- Phase 2 完成：`outputs/detective-results.json` 有至少一条结果。
-- Phase 3 完成：`outputs/ranking.json` 有至少一条排名。
+- Phase 1 完成：`outputs/candidates.json` 是合法数组、至少一个候选，且每个候选都有稳定的 `advisorProgramId`。
+- Phase 2 完成：`outputs/detective-results.json` 非空，`confirmedRevision` / `confirmedFingerprint` 与本次确认一致，每个已选维度都有结论或显式的 `not_completed` 标记。
+- Phase 3 完成：`outputs/ranking.json` 是合法排名数组，且至少有一条带 `rank` 或可比较分数的结果。
 
-只有满足对应产物条件，页面才显示“已完成”。中断但没有结果文件的任务仍应显示为待运行或待恢复。
+这套校验由后端在任务结束时执行（`web/local-runtime/run-artifacts.mjs`），前端不再自行判断。运行状态因此有六种：
+
+| 状态 | 含义 |
+| --- | --- |
+| `completed` | 模型正常结束，且产物通过校验 |
+| `partial` | 模型正常结束，但产物缺失、非法或属于旧确认版本；界面会列出缺了什么 |
+| `needs_input` | Agent 通过 `input.requested` 事件请求补充资料；原进程和 thread 保持存活，提交表单后由 `/continue` 在同一会话续跑 |
+| `failed` | 模型或进程异常结束 |
+| `cancelled` | 用户明确点了“取消任务” |
+| `interrupted` | 本地运行服务在任务结束前重启，重启时自动改写 |
+
+## 运行的并发与恢复
+
+- 同一个项目同时只允许一个任务。重复 `POST /api/runs` 返回 409，并在 `activeRun` 中带上现有的 runId、mode、状态和开始时间。
+- `GET /api/runs?projectId=` 返回 `{active, recent}`；`active` 里包含还没处理完的授权或资料请求。前端在加载和切换项目时调用它；若最近任务因服务重启成为 `interrupted`，顶栏会明确提示。
+- `GET /api/runs/:runId/stream` 重新接入正在运行的任务：先回放事件缓冲，再推送 `run.attached`（含待处理授权），随后是实时事件。
+- 关闭运行面板只隐藏面板，不会停止任务；顶栏保留“任务运行中”标志。停止是独立的 `POST /api/runs/:runId/stop`。
+- `project.json` 的写入先经过进程内队列，再使用项目目录中的共享文件锁；Web 与独立 CLI 脚本也会互斥。文件本身通过临时文件 + rename 原子替换。
+
+## 事件分级
+
+运行事件带 `level` 字段：`progress` / `warning` / `action_required` / `error` / `diagnostic`。主日志只显示前四类；`diagnostic` 收进默认折叠的“技术细节”区。反复的连接失败（MCP、HTTP 5xx、socket hang up 等）合并成一条“模型工具连接不稳定，正在重试（第 N 次）”。分类优先看来源和流（`web/local-runtime/run-events.mjs`），正则只作兼容补充。
 
 ## 文件与数据边界
 

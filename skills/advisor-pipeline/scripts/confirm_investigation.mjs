@@ -8,6 +8,7 @@ import {
   updateInvestigationDraft,
   validateInvestigationDraftAgainstCandidates,
 } from "./project-contract.mjs";
+import { withProjectFileLock } from "./project-file-lock.mjs";
 
 function valuesAfter(args, flag) {
   const values = [];
@@ -26,7 +27,7 @@ async function writeJsonAtomic(path, value) {
   await rename(temporary, path);
 }
 
-export async function confirmInvestigationInProject(
+async function confirmInvestigationInProjectUnlocked(
   root,
   {
     advisorProgramIds,
@@ -81,6 +82,13 @@ export async function confirmInvestigationInProject(
   await copyFile(projectFile, backup);
   await writeJsonAtomic(projectFile, updated);
   return { project: updated, backup };
+}
+
+export async function confirmInvestigationInProject(root, options) {
+  const projectRoot = resolve(root);
+  return withProjectFileLock(projectRoot, () =>
+    confirmInvestigationInProjectUnlocked(projectRoot, options),
+  );
 }
 
 async function main() {

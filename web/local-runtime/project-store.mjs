@@ -1,5 +1,6 @@
-import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   DEFAULT_DETECTIVE_SECTIONS,
   DETECTIVE_SECTIONS,
@@ -12,9 +13,11 @@ import {
   normalizeProjectMetadata,
   normalizeShortlistTarget,
   normalizeStatus,
+  readinessForProject,
   updateInvestigationDraft,
   validateInvestigationDraftAgainstCandidates,
 } from "../../skills/advisor-pipeline/scripts/project-contract.mjs";
+import { withProjectFileLock } from "../../skills/advisor-pipeline/scripts/project-file-lock.mjs";
 
 export { DEFAULT_DETECTIVE_SECTIONS, DETECTIVE_SECTIONS };
 
@@ -28,6 +31,17 @@ const defaultProjectInput = {
   shortlistTarget: 10,
 };
 
+export const CV_ALLOWED_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".txt", ".md"]);
+export const CV_MAX_BYTES = Math.max(
+  1,
+  Number(process.env.ADVISOR_ATLAS_CV_MAX_BYTES) || 20 * 1024 * 1024,
+);
+
+export function cvExtension(name) {
+  const match = String(name || "").toLowerCase().match(/(\.[a-z0-9]+)$/);
+  return match ? match[1] : "";
+}
+
 const COMMUNITY_CACHE_FILES = new Set([
   "community-blacklist-current.pdf",
   "community-blacklist-current.txt",
@@ -39,6 +53,10 @@ const COMMUNITY_CACHE_FILES = new Set([
 export function createProjectStore(projectRoot) {
   const projectsRoot = resolve(projectRoot, "projects");
   const sourceSkills = resolve(projectRoot, "skills");
+  // Every mutation is a read -> modify -> write over the whole project.json.
+  // Without this queue two overlapping requests both read the same snapshot and
+  // the later write silently drops the earlier one's field.
+  const projectLocks = new Map();
 
   function normalizeSlug(input) {
     const slug = String(input || "")
@@ -70,6 +88,37 @@ export function createProjectStore(projectRoot) {
       throw new Error("项目目录无效");
     }
     return target;
+  }
+
+  function withProjectLock(slug, task) {
+    const key = normalizeSlug(slug);
+    const previous = projectLocks.get(key) || Promise.resolve();
+    const operation = previous.then(
+      () => withProjectFileLock(projectPath(key), task),
+      () => withProjectFileLock(projectPath(key), task),
+    );
+    const guard = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    projectLocks.set(key, guard);
+    void guard.then(() => {
+      if (projectLocks.get(key) === guard) projectLocks.delete(key);
+    });
+    return operation;
+  }
+
+  // Rename is atomic on the same filesystem, so a reader (or a second process
+  // such as the CLI) never observes a half-written project.json.
+  async function writeJsonAtomic(filePath, value) {
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
+    try {
+      await rename(temporaryPath, filePath);
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => {});
+      throw error;
+    }
   }
 
   async function readStatus(target) {
@@ -173,36 +222,70 @@ export function createProjectStore(projectRoot) {
     });
   }
 
-  function projectReadiness(metadata) {
-    const hasCv = Boolean(metadata.cv?.path);
-    const hasInterests = Array.isArray(metadata.interests) && metadata.interests.length > 0;
-    const checks = [
-      { key: "target", label: "填写目标院校或地区范围", complete: Boolean(metadata.target) },
-      {
-        key: "matching_signal",
-        label: "上传 CV 或填写至少一个研究兴趣",
-        complete: hasCv || hasInterests,
-      },
-    ];
-    const objectiveChecks = [
-      { key: "degree", label: "填写目标学位", complete: Boolean(metadata.degree) },
-      { key: "season", label: "填写申请季", complete: Boolean(metadata.season) },
-    ];
-    return {
-      ready: checks.every((item) => item.complete),
-      phase1Ready: checks.every((item) => item.complete),
-      objectiveReady: objectiveChecks.every((item) => item.complete),
-      completed: checks.filter((item) => item.complete).length,
-      total: checks.length,
-      checks,
-      missing: checks.filter((item) => !item.complete).map((item) => item.label),
-      objectiveChecks,
-      objectiveMissing: objectiveChecks
-        .filter((item) => !item.complete)
-        .map((item) => item.label),
-      matchingSignal: hasCv ? "cv" : hasInterests ? "interests" : "none",
-      interestWeightTotal: hasInterests ? 100 : 0,
-    };
+  // `Boolean(cv.path)` kept reporting "已保存" after the file was moved or
+  // deleted, so the CV is re-checked on disk every time the project is read.
+  function cvAbsolutePath(target, cv) {
+    const raw = String(cv?.path || "");
+    if (!raw) return null;
+    const absolute = resolve(target, raw);
+    if (absolute !== target && !absolute.startsWith(`${target}${sep}`)) return null;
+    return absolute;
+  }
+
+  async function inspectCv(target, cv) {
+    if (!cv?.path) return { present: false, valid: false, issue: null, absolutePath: null };
+    const absolutePath = cvAbsolutePath(target, cv);
+    if (!absolutePath) {
+      return {
+        present: true,
+        valid: false,
+        issue: "CV 路径不在当前申请项目目录内，请重新上传",
+        absolutePath: null,
+      };
+    }
+    const inputsRoot = resolve(target, "inputs");
+    if (!absolutePath.startsWith(`${inputsRoot}${sep}`)) {
+      return {
+        present: true,
+        valid: false,
+        issue: "CV 不在项目的 inputs/ 目录内，请重新上传",
+        absolutePath,
+      };
+    }
+    let stats = null;
+    try {
+      stats = await stat(absolutePath);
+    } catch {
+      return {
+        present: true,
+        valid: false,
+        issue: "原 CV 文件已不存在或被移动，请重新上传",
+        absolutePath,
+      };
+    }
+    if (!stats.isFile()) {
+      return { present: true, valid: false, issue: "CV 路径不是普通文件", absolutePath };
+    }
+    if (stats.size <= 0) {
+      return { present: true, valid: false, issue: "CV 文件内容为空", absolutePath };
+    }
+    if (stats.size > CV_MAX_BYTES) {
+      return {
+        present: true,
+        valid: false,
+        issue: `CV 超过 ${Math.round(CV_MAX_BYTES / (1024 * 1024))} MB 上限`,
+        absolutePath,
+      };
+    }
+    if (!CV_ALLOWED_EXTENSIONS.has(cvExtension(cv.name) || cvExtension(absolutePath))) {
+      return {
+        present: true,
+        valid: false,
+        issue: "只支持 PDF / DOC / DOCX / TXT / MD 格式的 CV",
+        absolutePath,
+      };
+    }
+    return { present: true, valid: true, issue: null, absolutePath, size: stats.size };
   }
 
   async function getProject(slug) {
@@ -213,14 +296,29 @@ export function createProjectStore(projectRoot) {
       slug,
       detectiveResults,
     );
+    const candidates = await readCandidates(target);
+    const cvStatus = await inspectCv(target, metadata.cv);
     return {
       ...metadata,
+      cv: metadata.cv
+        ? {
+            ...metadata.cv,
+            absolutePath: cvStatus.absolutePath,
+            valid: cvStatus.valid,
+            issue: cvStatus.issue,
+          }
+        : null,
       path: target,
       status: await readStatus(target),
-      candidates: await readCandidates(target),
+      candidates,
       detectiveResults,
       rankings: await readRankings(target),
-      readiness: projectReadiness(metadata),
+      readiness: readinessForProject({
+        metadata,
+        candidates,
+        detectiveResults,
+        cvValid: cvStatus.valid,
+      }),
     };
   }
 
@@ -329,7 +427,7 @@ export function createProjectStore(projectRoot) {
     ]);
   }
 
-  async function updateProject(slug, input) {
+  async function updateProjectLocked(slug, input) {
     const target = projectPath(slug);
     const projectFile = resolve(target, "project.json");
     const metadata = normalizeMetadata(
@@ -373,11 +471,11 @@ export function createProjectStore(projectRoot) {
       updatedAt: new Date().toISOString(),
     };
     if (!updated.name) updated.name = "未命名申请项目";
-    await writeFile(projectFile, JSON.stringify(updated, null, 2));
+    await writeJsonAtomic(projectFile, updated);
     return getProject(slug);
   }
 
-  async function confirmInvestigation(slug, input = {}) {
+  async function confirmInvestigationLocked(slug, input = {}) {
     const target = projectPath(slug);
     const projectFile = resolve(target, "project.json");
     const detectiveResults = await readDetectiveResults(target);
@@ -418,31 +516,66 @@ export function createProjectStore(projectRoot) {
       }),
       updatedAt: now,
     };
-    await writeFile(projectFile, JSON.stringify(updated, null, 2));
+    await writeJsonAtomic(projectFile, updated);
     return getProject(slug);
   }
 
-  async function setProjectCv(slug, cv) {
+  async function setProjectCvLocked(slug, cv) {
     const target = projectPath(slug);
     const projectFile = resolve(target, "project.json");
     const metadata = normalizeMetadata(
       JSON.parse(await readFile(projectFile, "utf8")),
       slug,
     );
+    const absolutePath = resolve(target, String(cv.path || ""));
+    // Projects move between machines, so store the in-project relative path and
+    // let readers resolve it against the project directory.
+    const relativePath = absolutePath.startsWith(`${target}${sep}`)
+      ? absolutePath.slice(target.length + 1).split(sep).join("/")
+      : String(cv.path || "");
+    const candidate = {
+      name: String(cv.name || "").slice(0, 240),
+      path: relativePath,
+      size: Number(cv.size || 0),
+      type: String(cv.type || "application/octet-stream"),
+      uploadedAt: new Date().toISOString(),
+    };
+    const inspection = await inspectCv(target, candidate);
+    if (!inspection.valid) {
+      const error = new Error(inspection.issue || "CV 文件无法通过校验");
+      error.code = "INVALID_CV";
+      throw error;
+    }
     const updated = {
       ...metadata,
-      cv: {
-        name: String(cv.name || "").slice(0, 240),
-        path: String(cv.path || ""),
-        size: Number(cv.size || 0),
-        type: String(cv.type || "application/octet-stream"),
-        uploadedAt: new Date().toISOString(),
-      },
+      cv: candidate,
       updatedAt: new Date().toISOString(),
     };
-    await writeFile(projectFile, JSON.stringify(updated, null, 2));
+    await writeJsonAtomic(projectFile, updated);
     return getProject(slug);
   }
+
+  async function deleteProjectLocked(slug) {
+    const target = projectPath(slug);
+    // Resolve and read the project first so DELETE cannot be used as a generic
+    // recursive filesystem endpoint, even if a caller guesses a directory name.
+    const project = await getProject(slug);
+    await rm(target, { recursive: true, force: false });
+    return {
+      id: project.id,
+      name: project.name,
+      path: target,
+    };
+  }
+
+  const updateProject = (slug, input) =>
+    withProjectLock(slug, () => updateProjectLocked(slug, input));
+  const confirmInvestigation = (slug, input = {}) =>
+    withProjectLock(slug, () => confirmInvestigationLocked(slug, input));
+  const setProjectCv = (slug, cv) =>
+    withProjectLock(slug, () => setProjectCvLocked(slug, cv));
+  const deleteProject = (slug) =>
+    withProjectLock(slug, () => deleteProjectLocked(slug));
 
   async function ensureDefaultProject() {
     await mkdir(projectsRoot, { recursive: true });
@@ -454,6 +587,8 @@ export function createProjectStore(projectRoot) {
   return {
     projectsRoot,
     createProject,
+    deleteProject,
+    inspectCv,
     confirmInvestigation,
     ensureDefaultProject,
     getProject,

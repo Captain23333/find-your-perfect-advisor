@@ -412,14 +412,28 @@ skills/
 
 ### Web 中“开始寻找导师”为什么不能点击？
 
-请检查：
+每个阶段的前置条件不同，按钮读取的是同一份 readiness matrix：
 
-1. 是否已上传真实 CV
-2. 是否选择目标学位
-3. 是否填写申请季
-4. 是否填写目标院校或地区范围
-5. 研究兴趣权重是否合计为 100%
-6. Codex 或 Claude 是否至少有一个显示为“可用”
+| 阶段 | 必需条件 |
+| --- | --- |
+| Finder 1A（导师发现） | 目标院校或地区范围，且 CV 或至少一个研究兴趣（二选一） |
+| Finder 1B（客观筛选） | 1A 已产出候选 + 目标学位 + 申请季 |
+| Detective（背调） | 带稳定 `advisorProgramId` 的候选 + 与当前草稿一致的已确认配置 |
+| Ranking（综合排名） | 至少一条 Detective 结果 |
+
+所以“开始寻找导师”只需要第一行的两项；目标学位和申请季可以稍后补齐，研究兴趣权重是可选的（不填按等权处理，不需要凑满 100%）。
+
+另外请确认 Codex 或 Claude 至少有一个显示为“可用”。如果 CV 上传后被移动或删除，页面会提示“原 CV 文件已不存在或被移动”——此时它不再算作有效的匹配信号，需要重新上传或改填研究兴趣。
+
+### 关掉运行面板会不会把任务杀掉？
+
+不会。关闭面板只是隐藏它，任务仍在后台运行，顶栏会显示“任务运行中”。点击它可以重新接回原任务，包括之前的日志和还没处理的授权请求；刷新页面同样会自动接回。要真正停止，请在面板底部点“取消任务”。
+
+同一个申请项目同时只允许一个任务：重复启动会返回 409，并直接接回已经在跑的那个。不同项目之间仍可并行。
+
+### 为什么模型说“做完了”，页面却显示“本轮已结束，但尚未产生 Phase 2 结果”？
+
+因为完成状态以磁盘上的真实产物为准，而不是模型的最后一句话。后端会按阶段校验 `candidates.json` / `detective-results.json` / `ranking.json`：文件缺失、JSON 非法、结果为空，或者背调结果属于旧的确认版本，都会显示为 `partial` 并列出缺了什么。
 
 ### Web 为什么检测不到 Codex 或 Claude？
 
@@ -460,7 +474,32 @@ npm run dev
 
 ### 可以从 Web 切换到直接使用 Skills 吗？
 
-Web 创建的每个项目已经包含 `.agents/skills/` 和 `.claude/skills/`。你可以直接用 Codex 或 Claude 打开对应的 `projects/<project-id>/` 文件夹，但之后需要注意状态文件和前端数据格式的一致性。
+可以。Web 创建的每个项目已经包含 `.agents/skills/` 和 `.claude/skills/`，两边共用同一套 schemaVersion 4 契约。
+
+```bash
+cd projects/<project-id>
+node .agents/skills/advisor-pipeline/scripts/init_project.mjs --root "$PWD" --check
+codex   # 或 claude
+```
+
+`--check` 是只读校验，会指出缺失或不合法的文件；不带 `--check` 会确定性地补齐结构，且不会覆盖已有的 Finder / Detective 产物。Web 与这些 CLI 写入脚本共用项目级文件锁；若另一个操作正在写入，会等待或明确提示稍后重试，不再各自基于旧快照覆盖 `project.json`。
+
+选择阶段请用确定性脚本渲染菜单，不要让模型自由排版：
+
+```bash
+node .agents/skills/advisor-pipeline/scripts/render_investigation_menu.mjs --root "$PWD"
+```
+
+### 项目里的 skills 会随仓库更新吗？
+
+不会自动更新。Web 每次启动任务前会把仓库当前的 skills 同步到该项目；但你手动复制到别处的项目文件夹是一份快照，仓库更新后不会跟着变。需要更新时重新复制一次：
+
+```bash
+cp -R /path/to/repo/skills/. .agents/skills/
+cp -R /path/to/repo/skills/. .claude/skills/
+```
+
+复制不会覆盖 `inputs/`、`outputs/`、`project.json` 和社区缓存。
 
 ### 导师信息一定准确吗？
 

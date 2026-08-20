@@ -228,6 +228,45 @@ For schemaVersion 3 migration, non-empty selections without a real
 project with a real non-empty Detective artifact may be restored as a
 `source: legacy_artifact` historical snapshot.
 
+## `outputs/detective-results.json`
+
+A Detective round is only complete when this file exists and belongs to the
+confirmation it was launched against. The web runtime verifies it before it
+reports the phase as finished, so the shape is required, not advisory:
+
+```json
+{
+  "confirmedRevision": 3,
+  "confirmedFingerprint": "sha256 of the confirmed snapshot",
+  "generatedAt": "ISO-8601",
+  "selectedSections": ["identity_current_role"],
+  "communitySources": {"consented": false},
+  "results": [
+    {
+      "advisorProgramId": "advisor-program-id",
+      "name": "Real Name",
+      "sections": {
+        "identity_current_role": {"status": "completed", "summary": "…", "sourceIds": []},
+        "work_style_pressure": {"status": "not_completed", "summary": "为什么没做完"}
+      },
+      "evidenceCount": 0
+    }
+  ],
+  "evidenceCount": 0,
+  "evidenceCoverage": 0
+}
+```
+
+Rules:
+
+- Every confirmed `advisorProgramId` needs an entry.
+- Every selected section needs either a real conclusion or an explicit
+  `{"status": "not_completed", "summary": "…"}`. A missing key counts as an
+  unfinished round, not a finished one.
+- `confirmedRevision` and `confirmedFingerprint` must be copied from
+  `investigation.confirmed`. Results carrying an older revision do not count as
+  this round finishing.
+
 ## Cache and freshness
 
 - Reuse a URL and extracted evidence when it is current and supports the needed
