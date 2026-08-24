@@ -114,6 +114,12 @@ projects/<project-id>/
 
 Codex、Claude Code 或自定义 API 需要命令、文件或网络权限时，前端运行面板会暂停并显示授权卡。
 
+Custom API 并不是在浏览器中直接执行 Agent：本地后端使用项目随附的 Codex
+app-server 驱动工具与授权协议，再把模型请求发送到用户填写的 Responses API。
+`@openai/codex` 因此属于 Web 的运行依赖，但 Custom API 不要求 Codex 登录。
+连接前必须先确认该本地运行引擎可启动；不能只凭 `GET /models` 成功就把整个
+执行链标记为可用。
+
 - “允许一次”：只允许当前请求。
 - “本次运行允许”：只复用同类工具或同一命令入口。
 - “拒绝”：拒绝当前操作，Agent 可选择替代方案或停止。

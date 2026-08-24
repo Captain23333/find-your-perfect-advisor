@@ -88,7 +88,7 @@ Agent 需要执行命令、修改文件或申请网络权限时，网页会暂�
 |---|---|
 | Codex | 先在本机完成 Codex CLI 登录，控制台自动检测 |
 | Claude Code | 先在本机完成 Claude Code 登录，控制台自动检测 |
-| 自定义 API（高级） | 填写 Base URL 和 Key，读取模型列表后选择精确模型 ID |
+| 自定义 API（高级） | 填写 Base URL 和 Key，读取模型列表后选择精确模型 ID；项目自带本地 Codex 运行引擎，不要求登录 Codex |
 
 自定义接口需要兼容 OpenAI Responses API，并提供 `GET /models`。API Key 只保存在当前本地桥接进程的内存中，服务重启后需要重新连接。
 
@@ -438,6 +438,26 @@ skills/
 ### Web 为什么检测不到 Codex 或 Claude？
 
 Web 使用的是本机 CLI 登录状态。请先在普通终端中确认对应命令已经安装并登录，然后在页面的运行面板中点击“刷新状态”。
+
+普通终端、VS Code 集成终端与 Web 本地控制台在同一系统用户下运行时，通常
+共享 Codex/Claude 的登录缓存，因此在哪里完成 CLI 登录都可以被检测到。Web
+检测的是“CLI 已安装且登录有效”，不是某个 App 或终端窗口是否正在打开；仅仅
+启动一个 `codex`/`claude` 进程不会改变检测结果。通过自定义中转站环境变量或
+Codex custom provider 启动的终端也不会自动变成 Web 的 Custom API 连接，仍需
+在 Web 高级设置中单独填写 Base URL、Key 和模型。
+
+### Custom API 运行时报错 “spawn codex ENOENT”，怎么办？
+
+这表示中转站的接口、Key 和模型列表可能已经验证成功，但旧版本仍依赖系统中
+另行安装的 `codex` 命令，真正启动任务时找不到本地 Agent 运行引擎。更新后
+Codex app-server 已随 Web 依赖安装；无需登录 Codex：
+
+```bash
+git pull
+cd web
+npm install
+npm run dev
+```
 
 ### 运行任务时报错 “spawn EINVAL”，怎么办？
 

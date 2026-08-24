@@ -9,7 +9,7 @@ import test from "node:test";
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const serverEntry = resolve(testDirectory, "..", "local-runtime", "server.mjs");
 
-async function startRuntime() {
+async function startRuntime(envOverrides = {}) {
   const root = await mkdtemp(resolve(tmpdir(), "advisor-runtime-"));
   // The runtime copies the repo's skills into each project it creates.
   await mkdir(resolve(root, "skills", "advisor-pipeline"), { recursive: true });
@@ -20,6 +20,7 @@ async function startRuntime() {
       ...process.env,
       ADVISOR_ATLAS_PROJECT_ROOT: root,
       ADVISOR_ATLAS_RUNTIME_PORT: "0",
+      ...envOverrides,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -59,6 +60,37 @@ async function startRuntime() {
     },
   };
 }
+
+test("Custom API reports a missing Codex runtime before claiming it is connected", async (t) => {
+  const runtime = await startRuntime({
+    ADVISOR_ATLAS_CODEX_BIN: resolve(
+      tmpdir(),
+      "advisor-atlas-definitely-missing-codex",
+    ),
+  });
+  t.after(() => runtime.stop());
+
+  const health = await json(await fetch(`${runtime.baseUrl}/api/health`));
+  assert.equal(health.status, 200);
+  assert.equal(health.body.providers.custom.installed, false);
+  assert.equal(health.body.providers.custom.loggedIn, false);
+  assert.match(health.body.providers.custom.authDetail, /npm install/);
+
+  const connection = await json(
+    await fetch(`${runtime.baseUrl}/api/custom-provider/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: "https://example.invalid",
+        apiKey: "test-key-never-sent",
+        model: "test-model",
+      }),
+    }),
+  );
+  assert.equal(connection.status, 422);
+  assert.equal(connection.body.runtimeMissing, true);
+  assert.match(connection.body.error, /npm install/);
+});
 
 async function json(response) {
   return { status: response.status, body: await response.json() };

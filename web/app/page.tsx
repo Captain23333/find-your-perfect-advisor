@@ -3060,7 +3060,10 @@ export default function Home() {
                 <div className="custom-api-form">
                   <div className="advanced-intro">
                     <strong>高级设置</strong>
-                    <span>适合已经拥有 API 地址、Key 和模型名称的用户。</span>
+                    <span>
+                      适合已经拥有 API 地址、Key 和模型名称的用户。任务由项目随附的
+                      Codex 本地运行引擎执行，不要求登录 Codex。
+                    </span>
                   </div>
                   <div className="custom-grid">
                     <label>

@@ -17,6 +17,7 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
+    "@openai/codex": "0.149.1",
     "drizzle-orm": "0.45.2",
     "next": "^16.2.12",
     "pdfjs-dist": "^5.4.296",

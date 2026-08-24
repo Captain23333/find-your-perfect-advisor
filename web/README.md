@@ -30,7 +30,9 @@ npm run dev
 - Web 控制台：`http://localhost:3000/`
 - 仅绑定本机的 Agent 桥接服务：`http://127.0.0.1:4318/`
 
-本地桥接服务只调用电脑上已经安装、已经登录的 Claude/Codex CLI。
+本地桥接服务会调用已登录的 Claude/Codex CLI。Custom API 也需要 Codex
+app-server 作为本地 Agent 运行引擎；该运行引擎已作为 `web` 的 npm 依赖随
+`npm install` 安装，使用 Custom API 时不要求登录 Codex。
 
 ## 项目目录
 
@@ -78,9 +80,12 @@ projects/
 
 - Codex：安装 CLI 并完成 `codex login`
 - Claude Code：安装 CLI 并完成 Claude 账号登录
-- 自定义 API：接口必须兼容 OpenAI Responses API，并提供 `GET /models`；界面会要求选择或填写接口实际返回的精确模型 ID
+- 自定义 API：接口必须兼容 OpenAI Responses API，并提供 `GET /models`；界面会要求选择或填写接口实际返回的精确模型 ID。任务使用项目随附的 Codex app-server 运行，不要求登录 Codex
 
 自定义 API Key 只保存在本地桥接服务的进程内存中，不写入项目文件或浏览器持久存储。连接元数据仅保存显示名称、Base URL、模型 ID 和协议，不保存 Key。
+
+如果 Custom API 日志出现 `spawn codex ENOENT`，说明这是更新依赖前的旧安装，
+不是中转站拒绝了请求。进入 `web` 目录重新执行 `npm install` 并重启控制台即可。
 
 控制台默认使用项目写入边界，不启用完整磁盘访问，也不会自动 commit、push、部署或发送邮件。
 

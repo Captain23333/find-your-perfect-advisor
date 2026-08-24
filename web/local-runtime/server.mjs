@@ -55,9 +55,25 @@ const port = Number(process.env.ADVISOR_ATLAS_RUNTIME_PORT || 4318);
 const activeRuns = createRunRegistry();
 const projectStore = createProjectStore(projectRoot);
 const bundledCodexPath = "/Applications/ChatGPT.app/Contents/Resources/codex";
-const codexExecutable =
-  process.env.ADVISOR_ATLAS_CODEX_BIN ||
-  (existsSync(bundledCodexPath) ? bundledCodexPath : "codex");
+const localCodexScript = resolve(
+  runtimeDirectory,
+  "../node_modules/@openai/codex/bin/codex.js",
+);
+const codexCommand = process.env.ADVISOR_ATLAS_CODEX_BIN
+  ? {
+      executable: process.env.ADVISOR_ATLAS_CODEX_BIN,
+      prefixArgs: [],
+      source: "configured",
+    }
+  : existsSync(localCodexScript)
+    ? {
+        executable: process.execPath,
+        prefixArgs: [localCodexScript],
+        source: "project-dependency",
+      }
+    : existsSync(bundledCodexPath)
+      ? { executable: bundledCodexPath, prefixArgs: [], source: "chatgpt-app" }
+      : { executable: "codex", prefixArgs: [], source: "path" };
 const customProviderMetadataPath = resolve(dataRoot, "custom-provider.json");
 let customProviderSession = null;
 
@@ -167,6 +183,14 @@ function execText(command, args, timeout = 8000) {
   });
 }
 
+function execCodexText(args, timeout = 8000) {
+  return execText(
+    codexCommand.executable,
+    [...codexCommand.prefixArgs, ...args],
+    timeout,
+  );
+}
+
 async function readCustomProviderMetadata() {
   try {
     return JSON.parse(await readFile(customProviderMetadataPath, "utf8"));
@@ -224,6 +248,16 @@ async function connectCustomProvider(input) {
   const model = String(input.model || "").trim();
   if (!apiKey) throw new Error("请输入 API Key");
 
+  const appServer = await execCodexText(["app-server", "--help"]);
+  if (!appServer.ok) {
+    return {
+      connected: false,
+      runtimeMissing: true,
+      error:
+        "缺少 Advisor Atlas 的本地 Codex 运行引擎。请在 web 目录运行 npm install 并重启本地控制台；Custom API 使用你填写的 Key，不要求登录 Codex。",
+    };
+  }
+
   const models = await discoverCustomModels(baseUrl, apiKey);
   if (!model) {
     return {
@@ -261,8 +295,8 @@ async function connectCustomProvider(input) {
 
 async function providerHealth() {
   const [codexVersion, codexAuth, claudeVersion, claudeAuth] = await Promise.all([
-    execText(codexExecutable, ["--version"]),
-    execText(codexExecutable, ["login", "status"]),
+    execCodexText(["--version"]),
+    execCodexText(["login", "status"]),
     execText("claude", ["--version"]),
     execText("claude", ["auth", "status"]),
   ]);
@@ -297,14 +331,16 @@ async function providerHealth() {
             : "尚未登录 Claude Code",
       },
       custom: {
-        installed: true,
-        loggedIn: Boolean(customProviderSession),
+        installed: codexVersion.ok,
+        loggedIn: codexVersion.ok && Boolean(customProviderSession),
         version: customProviderSession?.model || null,
         authDetail: customProviderSession
           ? `已连接 ${customProviderSession.name}`
-          : (await readCustomProviderMetadata())
-            ? "已保存接口和模型；重启后需重新输入 Key"
-            : "尚未配置 OpenAI Responses-compatible API",
+          : !codexVersion.ok
+            ? "缺少本地 Codex 运行引擎；请在 web 目录运行 npm install 后重启"
+            : (await readCustomProviderMetadata())
+              ? "已保存接口和模型；重启后需重新输入 Key"
+              : "尚未配置 OpenAI Responses-compatible API",
       },
     },
   };
@@ -761,8 +797,8 @@ async function startRun(request, response, origin) {
   const command =
     provider === "codex"
       ? {
-          executable: codexExecutable,
-          args: ["app-server", "--stdio"],
+          executable: codexCommand.executable,
+          args: [...codexCommand.prefixArgs, "app-server", "--stdio"],
         }
       : provider === "claude"
         ? {
@@ -783,8 +819,9 @@ async function startRun(request, response, origin) {
             ],
           }
         : {
-            executable: codexExecutable,
+            executable: codexCommand.executable,
             args: [
+              ...codexCommand.prefixArgs,
               "app-server",
               "--stdio",
               "-c",
