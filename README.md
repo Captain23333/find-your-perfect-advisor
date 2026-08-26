@@ -1,6 +1,26 @@
 # Advisor Atlas · Find Your Perfect Advisor
 
-AI 导师匹配工具：从真实 CV 和申请目标出发，完成候选导师发现、背景调查与最终排名。
+从真实 CV 和申请目标出发，完成候选导师发现、背景调查、最终排名，并继续为一个
+明确的导师—项目组合生成可核验的 **Research Proposal（RP）** 和个性化
+**套磁信（Advisor Outreach）**。
+
+## 从找导师到准备申请材料
+
+| 能力 | Advisor Atlas 会做什么 | 主要产物 |
+|---|---|---|
+| 导师发现 | 解析真实 CV，在目标范围内发现导师并完成研究匹配 | 候选名单、研究匹配证据 |
+| 客观筛选 | 核对项目、学位、申请季、截止日期、材料与招生条件 | advisor—program 可行性记录 |
+| 导师背调 | 按用户选择的导师和维度调查论文主线、项目、招生与风险 | 背调证据与风险提示 |
+| 最终决策 | 综合匹配、可行性、证据覆盖和风险生成排名 | 申请就绪 Excel 与结构化排名 |
+| Research Proposal | 先核对官方格式，再完成文献综述、研究问题、方法、可行性与引用审计 | LaTeX、BibTeX、PDF、review 与 evidence 文件 |
+| 套磁信 | 用导师事实和申请者真实经历建立具体连接，按联系规则生成可复制邮件 | 邮件正文、证据桥与引用审计 |
+
+RP 和套磁信不是通用模板，也不会自动套用排名第一的导师。用户必须选择一个精确
+`advisorProgramId`，确认材料种类和生成顺序后才会开始。两类材料都会复用项目最初
+上传的 CV；CV 仍然有效时不会重复索要。
+
+引用过的导师/团队文献和独立领域文献会保存为合法公开 PDF，并记录来源、关系证据、
+读取层级、用途、SHA-256 和本地路径。系统只生成材料，不会发送邮件或提交申请。
 
 本项目只有两种使用方式：
 
@@ -23,6 +43,11 @@ AI 导师匹配工具：从真实 CV 和申请目标出发，完成候选导师�
 重点导师背景调查
         ↓
 综合评分与最终决策
+        ↓
+用户选择并确认一个精确导师—项目组合
+        ↓
+Research Proposal（LaTeX + BibTeX + PDF）
+和/或个性化套磁信（可复制邮件 + 引用审计）
 ```
 
 ## 方式一：使用 Web 本地控制台
@@ -77,7 +102,9 @@ npm run dev
 9. 最迟在 shortlist 的客观申请条件筛选前补齐目标学位和申请季。
 10. 选择重点导师，并勾选需要的背景调查维度。
 11. P2 显示“已完成”后直接查看背调结果；需要补充维度时再重新运行。
-11. 生成综合排名。网页只展示前三名，完整信息在当前项目 `outputs/` 下自动生成的 Excel 中。
+12. 生成综合排名。网页只展示前三名，完整信息在当前项目 `outputs/` 下自动生成的 Excel 中。
+13. 从最终排名中选择一个精确导师—项目组合，选择 RP、套磁信或两者及其顺序。
+14. 检查最终确认摘要；确认后再启动 RP 或套磁信生成。
 
 Phase 1 的最低输入未完成前，网页和后端只阻止启动任务，不阻止用户先选择模型。候选导师、背调证据和最终排名在任务真正开始前均为 `0`，不会显示演示结果。
 
@@ -108,7 +135,18 @@ projects/
     │   ├── candidates.json
     │   ├── advisor_records.json
     │   ├── program_records.json
-    │   └── evidence.json
+    │   ├── evidence.json
+    │   └── application-materials/
+    │       └── <advisorProgramId>/
+    │           ├── research-proposal.tex
+    │           ├── references.bib
+    │           ├── research-proposal.pdf
+    │           ├── outreach-email.txt
+    │           ├── proposal-review.md / outreach-audit.md
+    │           └── literature/
+    │               ├── manifest.json
+    │               ├── advisor-work/*.pdf
+    │               └── field-work/*.pdf
     ├── community-cache/       # 仅在明确同意后生成
     ├── runs/
     │   └── <run-id>/
@@ -187,6 +225,8 @@ my-advisor-application/
         ├── advisor-finder/
         ├── advisor-detective/
         ├── advisor-evaluator/
+        ├── advisor-research-proposal/
+        ├── advisor-outreach/
         └── advisor-pipeline/
 ```
 
@@ -220,6 +260,8 @@ my-advisor-application/
         ├── advisor-finder/
         ├── advisor-detective/
         ├── advisor-evaluator/
+        ├── advisor-research-proposal/
+        ├── advisor-outreach/
         └── advisor-pipeline/
 ```
 
