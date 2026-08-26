@@ -4,7 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 type Provider = "Claude Code" | "Codex" | "Custom API";
 type View = "overview" | "candidates" | "evidence" | "ranking";
-type RunnerMode = "finder" | "detective" | "ranking";
+type RunnerMode =
+  | "finder"
+  | "detective"
+  | "ranking"
+  | "research_proposal"
+  | "outreach_email";
 type RunState =
   | "idle"
   | "starting"
@@ -91,7 +96,12 @@ type ProjectReadiness = {
   interestWeightTotal: number;
   cvValid?: boolean;
   modes?: Record<
-    "finder" | "finder_objective" | "detective" | "ranking",
+    | "finder"
+    | "finder_objective"
+    | "detective"
+    | "ranking"
+    | "research_proposal"
+    | "outreach_email",
     { ready: boolean; missing: string[] }
   >;
 };
@@ -101,6 +111,7 @@ type AdvisorProject = {
   id: string;
   slug: string;
   name: string;
+  applicantName: string;
   season: string;
   degree: string;
   target: string;
@@ -130,6 +141,53 @@ type AdvisorProject = {
       source: "user_confirmed" | "legacy_artifact";
     } | null;
   };
+  applicationMaterials: {
+    draft: {
+      advisorProgramId: string;
+      materials: Array<"research_proposal" | "outreach_email">;
+      order: Array<"research_proposal" | "outreach_email">;
+      literaturePolicy: {
+        advisorWorks: true;
+        fieldWorks: true;
+        downloadOpenAccess: true;
+      };
+      revision: number;
+      updatedAt: string;
+    };
+    confirmed: {
+      advisorProgramId: string;
+      materials: Array<"research_proposal" | "outreach_email">;
+      order: Array<"research_proposal" | "outreach_email">;
+      literaturePolicy: {
+        advisorWorks: true;
+        fieldWorks: true;
+        downloadOpenAccess: true;
+      };
+      revision: number;
+      confirmedAt: string;
+      fingerprint: string;
+      source: "user_confirmed" | "legacy_artifact";
+    } | null;
+  };
+  materialArtifacts: Record<
+    "research_proposal" | "outreach_email",
+    {
+      complete: boolean;
+      missing: string[];
+      targetRoot?: string;
+      literature?: Array<{
+        literatureId: string;
+        category: "advisor_work" | "field_work";
+        title: string;
+        authors: string[];
+        year: number | null;
+        canonicalUrl: string;
+        localPath: string;
+        sha256: string;
+        relationship: { type?: string; note?: string } | null;
+      }>;
+    }
+  >;
   cv: {
     name: string;
     path: string;
@@ -258,7 +316,7 @@ const defaultTask = `请完整读取 skills/advisor-pipeline/SKILL.md，并从 P
 
 Phase 1 启动前只检查：
 1. 已填写目标学校或目标范围
-2. 已提供真实 CV，或者至少一个研究兴趣
+2. 已上传可读取的真实 CV
 
 目标学位和申请季可以稍后补充，但进入客观申请条件筛选前必须齐全。
 研究兴趣和权重是可选补充；没有权重时按等权处理。
@@ -268,6 +326,8 @@ const runModeArtifactLabels: Record<RunnerMode, string> = {
   finder: "Phase 1 候选导师",
   detective: "Phase 2 背调结果",
   ranking: "Phase 3 综合排名",
+  research_proposal: "Research Proposal 与可核验文献包",
+  outreach_email: "陶瓷信与引用审计",
 };
 
 function runModeArtifactLabel(mode: RunnerMode) {
@@ -279,6 +339,7 @@ const runInputFieldLabels: Record<string, string> = {
   degreeLevel: "目标学位",
   season: "申请季",
   target: "目标院校或地区范围",
+  applicantName: "申请者真实姓名",
   interests: "研究兴趣（逗号分隔）",
   shortlistTarget: "shortlist 数量",
 };
@@ -326,12 +387,14 @@ export default function Home() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [projectDraft, setProjectDraft] = useState({ name: "" });
   const [applicationDraft, setApplicationDraft] = useState<{
+    applicantName: string;
     season: string;
     degree: string;
     target: string;
     shortlistTarget: string;
     interests: Array<{ name: string; weight: string }>;
   }>({
+    applicantName: "",
     season: "",
     degree: "",
     target: "",
@@ -387,6 +450,15 @@ export default function Home() {
   const [investigationSaving, setInvestigationSaving] = useState(false);
   const [investigationConfirmOpen, setInvestigationConfirmOpen] = useState(false);
   const [evidenceConfigOpen, setEvidenceConfigOpen] = useState(true);
+  const [materialAdvisorId, setMaterialAdvisorId] = useState("");
+  const [selectedMaterials, setSelectedMaterials] = useState<
+    Set<"research_proposal" | "outreach_email">
+  >(() => new Set(["research_proposal", "outreach_email"]));
+  const [materialOrder, setMaterialOrder] = useState<
+    "research_proposal_first" | "outreach_email_first"
+  >("research_proposal_first");
+  const [materialsSaving, setMaterialsSaving] = useState(false);
+  const [materialsConfirmOpen, setMaterialsConfirmOpen] = useState(false);
   const [communityCache, setCommunityCache] = useState<CommunityCacheStatus>({
     state: "missing",
     fetchedAt: null,
@@ -527,6 +599,9 @@ export default function Home() {
   const detectiveComplete = Boolean(detectiveResults?.results.length);
   const rankingComplete = rankings.length > 0;
   const topRankings = rankings.slice(0, 3);
+  const selectedMaterialAdvisor = rankings.find(
+    (item) => item.advisorProgramId === materialAdvisorId,
+  );
   const projectStatus: ProjectStatus = activeProject?.status || {
     schemaVersion: 2,
     phase: "intake",
@@ -552,7 +627,7 @@ export default function Home() {
     completed: 0,
     total: 2,
     checks: [],
-    missing: ["填写目标院校或地区范围", "上传 CV 或填写至少一个研究兴趣"],
+    missing: ["填写目标院校或地区范围", "上传可读取的真实 CV"],
     objectiveChecks: [],
     objectiveMissing: ["填写目标学位", "填写申请季"],
     matchingSignal: "none",
@@ -563,6 +638,8 @@ export default function Home() {
       finder_objective: { ready: false, missing: [] },
       detective: { ready: false, missing: [] },
       ranking: { ready: false, missing: [] },
+      research_proposal: { ready: false, missing: [] },
+      outreach_email: { ready: false, missing: [] },
     },
   };
   // A project payload from an older runtime has no readiness matrix. Degrade to
@@ -577,6 +654,8 @@ export default function Home() {
     }
     if (mode === "detective") return modes.detective;
     if (mode === "ranking") return modes.ranking;
+    if (mode === "research_proposal") return modes.research_proposal;
+    if (mode === "outreach_email") return modes.outreach_email;
     return modes.finder;
   }
 
@@ -589,11 +668,11 @@ export default function Home() {
   );
   const draftCompleted = [
     Boolean(applicationDraft.target.trim()),
-    Boolean(filePath) || hasDraftInterests,
+    Boolean(filePath),
   ].filter(Boolean).length;
   const draftMissing = [
     !applicationDraft.target.trim() ? "填写目标院校或地区范围" : "",
-    !filePath && !hasDraftInterests ? "上传 CV 或填写至少一个研究兴趣" : "",
+    !filePath ? "上传可读取的真实 CV" : "",
   ].filter(Boolean);
   const draftPhaseOneReady = draftMissing.length === 0;
   const draftObjectiveMissing = [
@@ -622,6 +701,21 @@ export default function Home() {
     "resources_career_support",
   ].some((section) => selectedSections.has(section));
   const confirmedInvestigation = activeProject?.investigation?.confirmed || null;
+  const confirmedMaterials = activeProject?.applicationMaterials?.confirmed || null;
+  const materialOrderList = [...selectedMaterials].sort((left, right) => {
+    const preferred = materialOrder === "research_proposal_first"
+      ? ["research_proposal", "outreach_email"]
+      : ["outreach_email", "research_proposal"];
+    return preferred.indexOf(left) - preferred.indexOf(right);
+  });
+  const confirmedMaterialsMatchDraft = Boolean(
+    confirmedMaterials &&
+      confirmedMaterials.advisorProgramId === materialAdvisorId &&
+      confirmedMaterials.materials.length === selectedMaterials.size &&
+      confirmedMaterials.materials.every((item) => selectedMaterials.has(item)) &&
+      confirmedMaterials.order.length === materialOrderList.length &&
+      confirmedMaterials.order.every((item, index) => item === materialOrderList[index]),
+  );
   const confirmedMatchesCurrentDraft = Boolean(
     confirmedInvestigation &&
       confirmedInvestigation.selectedAdvisorProgramIds.length === selected.size &&
@@ -662,6 +756,34 @@ export default function Home() {
               "输出评分依据与来源，缺失信息不使用推测补齐",
             ],
           }
+        : runnerMode === "research_proposal"
+          ? {
+              kicker: "RESEARCH PROPOSAL",
+              title: "生成 Research Proposal",
+              description: "围绕已确认导师与项目，建立可核验文献包后再写作。",
+              runningLabel: "正在研究与写作",
+              startLabel: "开始生成 RP",
+              completionHint: "只有 RP、审计文件和本地文献包全部通过校验才会完成。",
+              summary: [
+                `精确目标：${confirmedMaterials?.advisorProgramId || "尚未确认"}`,
+                "同时核验导师本人/团队文献与领域文献",
+                "只下载合法公开 PDF，记录 SHA-256、来源与读取层级",
+              ],
+            }
+          : runnerMode === "outreach_email"
+            ? {
+                kicker: "ADVISOR OUTREACH",
+                title: "生成陶瓷信",
+                description: "用真实申请者经历与已核验导师文献建立一条具体连接。",
+                runningLabel: "正在核验与起草",
+                startLabel: "开始生成陶瓷信",
+                completionHint: "完成后会保留邮件草稿、引用审计和本地文献包。",
+                summary: [
+                  `精确目标：${confirmedMaterials?.advisorProgramId || "尚未确认"}`,
+                  "检查官方联系规则，不承诺导师一定回复",
+                  "邮件不自动发送；引用来源全部留在本地审计中",
+                ],
+              }
         : {
             kicker: "START MATCHING",
             title: "开始寻找导师",
@@ -686,6 +808,7 @@ export default function Home() {
     if (syncedProjectIdRef.current === activeProject.id) return;
     syncedProjectIdRef.current = activeProject.id;
     setApplicationDraft({
+      applicantName: activeProject.applicantName || "",
       season: activeProject.season || "",
       degree: activeProject.degree || "",
       target: activeProject.target || "",
@@ -712,6 +835,19 @@ export default function Home() {
     setIntakeDirty(false);
     setEvidenceConfigOpen(!activeProject.detectiveResults?.results.length);
     setInvestigationConfirmOpen(false);
+    const savedMaterials = activeProject.applicationMaterials?.draft;
+    setMaterialAdvisorId(savedMaterials?.advisorProgramId || "");
+    setSelectedMaterials(
+      new Set(savedMaterials?.materials?.length
+        ? savedMaterials.materials
+        : ["research_proposal", "outreach_email"]),
+    );
+    setMaterialOrder(
+      savedMaterials?.order?.[0] === "outreach_email"
+        ? "outreach_email_first"
+        : "research_proposal_first",
+    );
+    setMaterialsConfirmOpen(false);
   }, [activeProjectId, activeProject]);
 
   useEffect(() => {
@@ -1056,7 +1192,7 @@ export default function Home() {
   }
 
   function updateApplicationField(
-    field: "season" | "degree" | "target",
+    field: "applicantName" | "season" | "degree" | "target",
     value: string,
   ) {
     setIntakeDirty(true);
@@ -1071,6 +1207,7 @@ export default function Home() {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          applicantName: applicationDraft.applicantName,
           season: applicationDraft.season,
           degree: applicationDraft.degree,
           target: applicationDraft.target,
@@ -1241,6 +1378,12 @@ export default function Home() {
             } else if (mode === "ranking") {
               setView("ranking");
               showNotice("综合排名已生成");
+            } else if (mode === "research_proposal") {
+              setView("ranking");
+              showNotice("Research Proposal 与本地文献核验包已生成");
+            } else if (mode === "outreach_email") {
+              setView("ranking");
+              showNotice("陶瓷信、引用审计与本地文献核验包已生成");
             } else {
               setView("candidates");
               showNotice("导师搜索已完成，候选名单已更新");
@@ -1330,7 +1473,9 @@ export default function Home() {
           projectId: activeProjectId,
           mode: runnerMode,
           confirmedRevision:
-            activeProject?.investigation?.confirmed?.revision ?? undefined,
+            ["research_proposal", "outreach_email"].includes(runnerMode)
+              ? activeProject?.applicationMaterials?.confirmed?.revision ?? undefined
+              : activeProject?.investigation?.confirmed?.revision ?? undefined,
           provider:
             provider === "Codex"
               ? "codex"
@@ -1656,7 +1801,122 @@ export default function Home() {
     openRunner(`请完整读取 skills/advisor-evaluator/SKILL.md，使用当前项目已有的真实候选导师和背调证据生成最终排名。
 
 必须保留评分依据、权重、风险提示和证据来源。缺少必要证据时明确指出，不得用推测补齐。
-将结构化排名写入 outputs/ranking.json，并按 Skill 的确定性脚本生成 outputs/advisor_application_ready_YYYYMMDD.xlsx。`, "ranking");
+    将结构化排名写入 outputs/ranking.json，并按 Skill 的确定性脚本生成 outputs/advisor_application_ready_YYYYMMDD.xlsx。`, "ranking");
+  }
+
+  function toggleMaterial(material: "research_proposal" | "outreach_email") {
+    setSelectedMaterials((current) => {
+      const next = new Set(current);
+      if (next.has(material)) next.delete(material);
+      else next.add(material);
+      return next;
+    });
+    setMaterialsConfirmOpen(false);
+  }
+
+  async function saveApplicationMaterialsDraft(showConfirmation = true) {
+    if (!activeProjectId) throw new Error("请先选择申请项目");
+    if (!materialAdvisorId) throw new Error("请选择一个精确导师—项目组合");
+    if (!selectedMaterials.size) throw new Error("请至少选择一种申请材料");
+    const response = await fetch(`${runtimeUrl}/api/projects/${activeProjectId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        applicationMaterials: {
+          advisorProgramId: materialAdvisorId,
+          materials: [...selectedMaterials],
+          order: materialOrderList,
+        },
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "申请材料配置保存失败");
+    setProjects((current) =>
+      current.map((project) =>
+        project.id === activeProjectId ? payload.project : project,
+      ),
+    );
+    if (showConfirmation) setMaterialsConfirmOpen(true);
+    return payload.project as AdvisorProject;
+  }
+
+  async function reviewApplicationMaterials() {
+    setMaterialsSaving(true);
+    try {
+      await saveApplicationMaterialsDraft(true);
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "申请材料配置保存失败");
+    } finally {
+      setMaterialsSaving(false);
+    }
+  }
+
+  async function confirmApplicationMaterials() {
+    setMaterialsSaving(true);
+    try {
+      const saved = await saveApplicationMaterialsDraft(false);
+      const response = await fetch(
+        `${runtimeUrl}/api/projects/${activeProjectId}/application-materials/confirm`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            draftRevision: saved.applicationMaterials.draft.revision,
+          }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "申请材料最终确认失败");
+      setProjects((current) =>
+        current.map((project) =>
+          project.id === activeProjectId ? payload.project : project,
+        ),
+      );
+      setMaterialsConfirmOpen(false);
+      showNotice("申请材料目标、顺序与文献核验条件已确认");
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : "申请材料最终确认失败");
+    } finally {
+      setMaterialsSaving(false);
+    }
+  }
+
+  function startApplicationMaterial(
+    mode: "research_proposal" | "outreach_email",
+  ) {
+    const readiness = modeReadiness(mode);
+    if (!readiness.ready) {
+      showNotice(`生成申请材料前，请先完成：${readiness.missing.join("、")}`);
+      intakeRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    const confirmed = activeProject?.applicationMaterials?.confirmed;
+    if (!confirmed || !confirmedMaterialsMatchDraft) {
+      showNotice("请先最终确认当前申请材料配置");
+      return;
+    }
+    const skill = mode === "research_proposal"
+      ? "advisor-research-proposal"
+      : "advisor-outreach";
+    const targetDirectory = `outputs/application-materials/${confirmed.advisorProgramId}`;
+    openRunner(`请完整读取 skills/${skill}/SKILL.md，并严格按本次已确认快照执行。
+
+精确 advisorProgramId：${confirmed.advisorProgramId}
+申请材料确认版本：${confirmed.revision}
+申请材料配置指纹：${confirmed.fingerprint}
+本轮材料：${mode}
+确认顺序：${confirmed.order.join(" -> ")}
+
+申请者真实姓名：${activeProject?.applicantName || ""}
+真实 CV：${activeProject?.cv?.absolutePath || ""}
+
+这是当前项目在 Pipeline 最初已上传并持续复用的 CV。不得因为进入新的 Skill 或阶段而再次要求用户上传、粘贴或重复提供 CV。在任何检索或写作前读取该文件并核对申请者姓名；只有该路径缺失/不可读、文件明显属于其他人，或姓名冲突时才暂停并索取替换文件。若只有某项关键事实缺少依据，仅询问该项事实，不得重新索要整份 CV。姓名为空/含占位符时只询问姓名。不得生成申请者可见的 RP、PDF 或邮件正文，不得使用示例姓名或虚构经历。
+
+先分别核验导师本人/团队文献（advisor_work）与研究领域文献（field_work）。把准备下载的来源写成项目内 JSON，再运行 skills/advisor-pipeline/scripts/fetch_open_literature.mjs；只允许合法公开 PDF，不得绕过付费墙。所有实际引用必须在 ${targetDirectory}/literature/manifest.json 中记录 canonical URL、公开获取依据、读取层级、usedIn、本地路径、SHA-256 与文件大小，并在审计文件逐项列出 literatureId。
+
+${mode === "research_proposal"
+  ? `先核验该项目实际要求 RP、research statement 还是 Statement of Purpose；官方模板、篇幅和引用格式优先。若本轮确需 RP/讨论用 concept note，写入 ${targetDirectory}/research-proposal.tex、references.bib、proposal-evidence.md、proposal-review.md，使用 build_research_proposal.mjs 生成 research-proposal.pdf 与 proposal-build.json，并逐页渲染检查。申请者可见文件不得出现内部 TEST/DRAFT/DO NOT SUBMIT 标记；待核实项放在 review 和交付说明。`
+  : `写入干净可复制的 ${targetDirectory}/outreach-email.txt 和内部核验文件 outreach-audit.md。先核实官方联系规则；只使用真实申请者经历，不得在邮件正文放 TEST/DRAFT/DO NOT SEND 标记，不得承诺导师回复或发送邮件。`}`, mode);
   }
 
   async function connectCustomApi() {
@@ -2047,7 +2307,7 @@ export default function Home() {
                       ? "候选导师发现已完成。选择重点对象，开始证据可追溯的深度背调。"
                       : projectReadiness.phase1Ready
                         ? "Phase 1 资料已齐全。选择执行引擎后，即可开始低成本的导师发现与匹配。"
-                        : "模型引擎可以随时选择；启动 Phase 1 只需要目标范围，以及 CV 或研究兴趣。"}
+                        : "模型引擎可以随时选择；启动 Phase 1 需要目标范围和一份真实 CV。"}
               </p>
             </div>
             <div className="hero-side">
@@ -2223,7 +2483,7 @@ export default function Home() {
                 </span>
               </div>
               <p className="intake-guide">
-                Phase 1 只需目标范围，以及 CV 或研究兴趣二选一。学位与申请季可以稍后补充，但进入客观条件筛选前必须填写。
+                Phase 1 需要目标范围和一份真实 CV。申请者姓名用于后续 RP 与套磁信；学位与申请季最迟在客观条件筛选前补齐。
               </p>
               <div className="intake-progress" aria-label="申请资料完成进度">
                 <span
@@ -2241,7 +2501,7 @@ export default function Home() {
                 <span className="file-icon">CV</span>
                 <span>
                   <strong>
-                    1. 上传真实 CV <em>与研究兴趣二选一</em>
+                    1. 上传真实 CV <em>必需</em>
                   </strong>
                   <small>
                     {uploadState === "uploading"
@@ -2258,9 +2518,21 @@ export default function Home() {
                 <b>{uploadState === "ready" ? "更换" : "选择文件"}</b>
               </label>
               <div className="application-form">
+                <label>
+                  <span>2. 申请者真实姓名 <em>RP / 套磁信前必填</em></span>
+                  <input
+                    value={applicationDraft.applicantName}
+                    onChange={(event) =>
+                      updateApplicationField("applicantName", event.target.value)
+                    }
+                    placeholder="例如：Zihan Hu"
+                    autoComplete="name"
+                  />
+                  <small>用于核对申请者身份和邮件签名；若项目要求匿名 RP，不会强行写入 PDF</small>
+                </label>
                 <div className="application-row">
                   <label>
-                    <span>2. 目标学位 <em>客观筛选前补齐</em></span>
+                    <span>3. 目标学位 <em>客观筛选前补齐</em></span>
                     <select
                       value={applicationDraft.degree}
                       onChange={(event) =>
@@ -2277,7 +2549,7 @@ export default function Home() {
                     <small>例如：PhD</small>
                   </label>
                   <label>
-                    <span>3. 申请季 <em>客观筛选前补齐</em></span>
+                    <span>4. 申请季 <em>客观筛选前补齐</em></span>
                     <input
                       value={applicationDraft.season}
                       onChange={(event) =>
@@ -2289,7 +2561,7 @@ export default function Home() {
                   </label>
                 </div>
                 <label>
-                  <span>4. 目标院校或地区范围 <em>必填</em></span>
+                  <span>5. 目标院校或地区范围 <em>必填</em></span>
                   <textarea
                     value={applicationDraft.target}
                     onChange={(event) =>
@@ -2302,7 +2574,7 @@ export default function Home() {
                 </label>
                 <div className="interest-editor">
                   <div className="interest-editor-title">
-                    <span>5. 研究兴趣与权重 <em>可选</em></span>
+                    <span>6. 研究兴趣与权重 <em>可选</em></span>
                     <small className={hasDraftInterests ? "valid" : ""}>
                       {!hasDraftInterests
                         ? "可留空"
@@ -2369,7 +2641,7 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="shortlist-field">
-                  <span>6. Phase 1 希望保留的导师数</span>
+                  <span>7. Phase 1 希望保留的导师数</span>
                   <div className="shortlist-control">
                     {[5, 10, 15, 20].map((count) => (
                       <button
@@ -2498,7 +2770,7 @@ export default function Home() {
                           <p>
                             {projectReadiness.phase1Ready
                               ? "Phase 1 资料已经齐全，现在可以开始寻找导师。"
-                              : "请填写目标范围，并上传 CV 或填写至少一个研究兴趣。"}
+                              : "请填写目标范围并上传一份可读取的真实 CV。"}
                           </p>
                           <button onClick={startPhaseOne}>
                             {projectReadiness.phase1Ready ? "开始寻找导师" : "先补齐 Phase 1 输入"}
@@ -2942,6 +3214,184 @@ export default function Home() {
                 <p className="ranking-footnote">
                   页面仅展示前三名和最关键的待确认项，其余候选与完整字段请查看 Excel。
                 </p>
+                <article className="panel application-materials-panel">
+                  <div className="materials-heading">
+                    <div>
+                      <span className="section-kicker">OPTIONAL NEXT STEP</span>
+                      <h2>确认后生成陶瓷信 / Research Proposal</h2>
+                      <p>
+                        不自动选择第一名。每次只绑定一个精确导师—项目组合，并把导师文献、
+                        领域文献和合法公开 PDF 一起留在本地供你核验。
+                      </p>
+                    </div>
+                    {confirmedMaterialsMatchDraft && (
+                      <span className="phase-complete-chip">✓ 配置已确认</span>
+                    )}
+                  </div>
+
+                  <label className="materials-field">
+                    <span>1. 精确导师—项目组合</span>
+                    <select
+                      value={materialAdvisorId}
+                      onChange={(event) => {
+                        setMaterialAdvisorId(event.target.value);
+                        setMaterialsConfirmOpen(false);
+                      }}
+                    >
+                      <option value="">请选择，不会自动使用排名第一</option>
+                      {rankings.map((item) => (
+                        <option key={item.advisorProgramId} value={item.advisorProgramId}>
+                          #{item.rank} {item.name} · {item.program || item.school} · {item.advisorProgramId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="materials-field">
+                    <span>2. 要生成的材料</span>
+                    <div className="materials-options">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={selectedMaterials.has("research_proposal")}
+                          onChange={() => toggleMaterial("research_proposal")}
+                        />
+                        <strong>Research Proposal</strong>
+                        <small>研究问题、文献综述、方法、可行性与审计</small>
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={selectedMaterials.has("outreach_email")}
+                          onChange={() => toggleMaterial("outreach_email")}
+                        />
+                        <strong>陶瓷信</strong>
+                        <small>邮件草稿、联系规则、证据桥与引用审计</small>
+                      </label>
+                    </div>
+                  </div>
+
+                  {selectedMaterials.size > 1 && (
+                    <label className="materials-field">
+                      <span>3. 生成顺序</span>
+                      <select
+                        value={materialOrder}
+                        onChange={(event) => {
+                          setMaterialOrder(
+                            event.target.value as
+                              | "research_proposal_first"
+                              | "outreach_email_first",
+                          );
+                          setMaterialsConfirmOpen(false);
+                        }}
+                      >
+                        <option value="research_proposal_first">先 RP，再决定陶瓷信是否提及/附上</option>
+                        <option value="outreach_email_first">先做简短联系，再发展 RP</option>
+                      </select>
+                    </label>
+                  )}
+
+                  <div className="literature-guardrail">
+                    <strong>固定文献核验条件</strong>
+                    <p>
+                      两类文献都必须列出：① 导师本人/团队；② 导师领域。
+                      前者必须核验导师署名或公开团队关系，后者不得含目标导师署名。
+                      实际引用只允许合法公开版本，并保存本地 PDF、canonical URL、获取依据、
+                      读取层级、用途、SHA-256 与文件大小；不得绕过付费墙。
+                    </p>
+                  </div>
+
+                  <div className="materials-actions">
+                    <button
+                      className="secondary-button"
+                      disabled={materialsSaving || !materialAdvisorId || !selectedMaterials.size}
+                      onClick={reviewApplicationMaterials}
+                    >
+                      {materialsSaving ? "正在保存…" : "查看最终确认摘要"}
+                    </button>
+                  </div>
+
+                  {materialsConfirmOpen && (
+                    <div className="materials-confirmation" role="status">
+                      <strong>请最终确认（确认前不会搜索、下载或写作）</strong>
+                      <ul>
+                        <li>
+                          目标：{selectedMaterialAdvisor?.name || "待核实"} · {selectedMaterialAdvisor?.program || selectedMaterialAdvisor?.school} · <code>{materialAdvisorId}</code>
+                        </li>
+                        <li>材料：{materialOrderList.join(" → ")}</li>
+                        <li>文献：导师署名/团队关系可核验 + 独立领域；仅合法公开 PDF；全部本地留档和校验</li>
+                        <li>边界：不会发送邮件、不会提交 RP、不会自动切换目标</li>
+                      </ul>
+                      <div className="materials-actions">
+                        <button onClick={() => setMaterialsConfirmOpen(false)}>返回修改</button>
+                        <button
+                          className="primary-button"
+                          disabled={materialsSaving}
+                          onClick={confirmApplicationMaterials}
+                        >
+                          {materialsSaving ? "正在确认…" : "确认此配置"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {confirmedMaterialsMatchDraft && confirmedMaterials && (
+                    <div className="materials-run-area">
+                      <div>
+                        <strong>已绑定确认版本 {confirmedMaterials.revision}</strong>
+                        <code>{confirmedMaterials.fingerprint.slice(0, 16)}…</code>
+                      </div>
+                      {confirmedMaterials.order.map((material) => {
+                        const artifact = activeProject?.materialArtifacts?.[material];
+                        const ready = modeReadiness(material);
+                        return (
+                          <div className="material-run-row" key={material}>
+                            <div>
+                              <strong>
+                                {material === "research_proposal" ? "Research Proposal" : "陶瓷信"}
+                              </strong>
+                              <small>
+                                {artifact?.complete
+                                  ? "产物与本地文献包已通过校验"
+                                  : ready.ready
+                                    ? "可以开始"
+                                    : ready.missing.join("；")}
+                              </small>
+                              {artifact?.literature?.length ? (
+                                <ul className="material-literature-list">
+                                  {artifact.literature.map((source) => (
+                                    <li key={`${material}-${source.literatureId}`}>
+                                      <span className={`literature-kind ${source.category}`}>
+                                        {source.category === "advisor_work" ? "导师/团队" : "独立领域"}
+                                      </span>
+                                      <a href={source.canonicalUrl} target="_blank" rel="noreferrer">
+                                        {source.literatureId} · {source.title}
+                                      </a>
+                                      <small>
+                                        {source.authors.join(", ")}{source.year ? ` (${source.year})` : ""}
+                                      </small>
+                                      <code>{source.localPath}</code>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                            </div>
+                            <button
+                              className={artifact?.complete ? "secondary-button" : "primary-button"}
+                              disabled={!ready.ready}
+                              onClick={() => startApplicationMaterial(material)}
+                            >
+                              {artifact?.complete ? "重新生成" : "开始生成"}
+                            </button>
+                          </div>
+                        );
+                      })}
+                      <code>
+                        {activeProject?.path}/outputs/application-materials/{confirmedMaterials.advisorProgramId}
+                      </code>
+                    </div>
+                  )}
+                </article>
               </>
             ) : (
               <article className="panel honest-empty">
@@ -3481,7 +3931,7 @@ export default function Home() {
               <ol>
                 <li>
                   <strong>准备申请资料</strong>
-                  <span>Phase 1 只需目标范围，以及 CV 或研究兴趣；学位和申请季在客观筛选前补齐。</span>
+                  <span>Phase 1 需要目标范围和真实 CV；申请者姓名在生成 RP 或套磁信前必填，学位和申请季在客观筛选前补齐。</span>
                 </li>
                 <li>
                   <strong>选择模型</strong>

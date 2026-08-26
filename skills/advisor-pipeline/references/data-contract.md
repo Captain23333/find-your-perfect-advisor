@@ -1,6 +1,6 @@
 # Advisor Atlas shared data contract
 
-Use project-input `schemaVersion: 4`; status and researched-output records
+Use project-input `schemaVersion: 6`; status and researched-output records
 remain version 2. Store structured state in the application project, not inside
 a skill folder.
 
@@ -19,6 +19,8 @@ continue to use the snake_case field names shown below.
 | `outputs/advisor_records.json` | Advisor facts, fit, selected-section results, and advisor-specific sources |
 | `outputs/program_records.json` | Deduplicated school/program/application facts |
 | `outputs/evidence.json` | Field-level evidence and community leads |
+| `outputs/ranking.json` | Evaluator ranking and the allowed target set for application materials |
+| `outputs/application-materials/<advisorProgramId>/` | Separately confirmed RP/outreach drafts, audits, and local literature bundle |
 
 ## Direct CLI bootstrap
 
@@ -37,10 +39,11 @@ before safely normalizing an existing project or status file.
 
 ```json
 {
-  "schemaVersion": 4,
+  "schemaVersion": 6,
   "id": "stable-local-project-id",
   "slug": "stable-local-project-id",
   "name": "User-facing project name",
+  "applicantName": "",
   "season": "",
   "degree": "",
   "target": "",
@@ -61,10 +64,30 @@ before safely normalizing an existing project or status file.
     },
     "confirmed": null
   },
+  "applicationMaterials": {
+    "draft": {
+      "advisorProgramId": "",
+      "materials": [],
+      "order": [],
+      "literaturePolicy": {
+        "advisorWorks": true,
+        "fieldWorks": true,
+        "downloadOpenAccess": true
+      },
+      "revision": 0,
+      "updatedAt": "ISO-8601"
+    },
+    "confirmed": null
+  },
   "createdAt": "ISO-8601",
   "updatedAt": "ISO-8601"
 }
 ```
+
+`applicantName` is required before RP or outreach generation and must contain
+the confirmed real or preferred professional name, never a sample identity. A
+current readable CV under `inputs/` is required before Finder and again before
+RP or outreach generation; research-interest text cannot replace the CV.
 
 Also create `status.json` with the Pipeline status schema and initialize the
 four structured output files as empty JSON arrays. Derive IDs from the local
@@ -227,6 +250,20 @@ For schemaVersion 3 migration, non-empty selections without a real
 `detective-results.json` become draft-only and require confirmation. A legacy
 project with a real non-empty Detective artifact may be restored as a
 `source: legacy_artifact` historical snapshot.
+
+## Application-material configuration
+
+Application materials use a second independent draft/confirmation pair. A
+current ranking is required, and `advisorProgramId` must match one exact ranking
+row. Only one target is confirmed at a time; materials may contain
+`research_proposal`, `outreach_email`, or both, while `order` contains the same
+IDs in the user's confirmed sequence. The three `literaturePolicy` values are
+fixed true completion invariants.
+
+Render and confirm this gate with the deterministic scripts documented in
+`application-materials-contract.md`. A run must bind to the confirmed revision
+and fingerprint. Changing the target, material set, or order invalidates the
+prior authorization without deleting its local artifacts.
 
 ## `outputs/detective-results.json`
 

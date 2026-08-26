@@ -1,7 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { verifyApplicationMaterialArtifacts } from "../../skills/advisor-pipeline/scripts/application-materials-artifacts.mjs";
 
-export const RUN_MODES = ["finder", "detective", "ranking"];
+export const RUN_MODES = [
+  "finder",
+  "detective",
+  "ranking",
+  "research_proposal",
+  "outreach_email",
+];
 
 // A run is only `completed` when the phase's real artifact is on disk. Every
 // other outcome has to say what is missing instead of claiming success.
@@ -18,6 +25,8 @@ export const RUN_MODE_LABELS = {
   finder: "Phase 1 候选导师",
   detective: "Phase 2 背调结果",
   ranking: "Phase 3 综合排名",
+  research_proposal: "Research Proposal",
+  outreach_email: "陶瓷信",
 };
 
 async function readJsonFile(projectPath, ...segments) {
@@ -184,8 +193,25 @@ export async function verifyRunArtifacts({
   confirmedFingerprint = null,
   selectedAdvisorProgramIds = [],
   selectedSections = [],
+  advisorProgramId = "",
+  expectedAdvisorName = "",
+  applicantName = "",
+  cvValid = false,
   startedAt = null,
 }) {
+  if (mode === "research_proposal" || mode === "outreach_email") {
+    return verifyApplicationMaterialArtifacts({
+      projectPath,
+      mode,
+      advisorProgramId,
+      confirmedRevision,
+      confirmedFingerprint,
+      expectedAdvisorName,
+      applicantName,
+      cvValid,
+      startedAt,
+    });
+  }
   if (mode === "detective") {
     const file = await readJsonFile(projectPath, "outputs", "detective-results.json");
     const outcome = verifyDetective(file, {

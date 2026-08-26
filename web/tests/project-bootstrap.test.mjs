@@ -71,7 +71,7 @@ test("direct CLI bootstrap preserves Finder outputs and creates Web-compatible s
 
     const project = JSON.parse(await readFile(resolve(root, "project.json"), "utf8"));
     const status = JSON.parse(await readFile(resolve(root, "status.json"), "utf8"));
-    assert.equal(project.schemaVersion, 4);
+    assert.equal(project.schemaVersion, 6);
     assert.equal(project.target, "");
     assert.deepEqual(project.interests, []);
     assert.ok(project.createdAt);

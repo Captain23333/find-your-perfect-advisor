@@ -44,7 +44,7 @@ internal IDs or section names.
    explain that Phase 1 is required and stop. Never substitute example data.
 2. Run `node .agents/skills/advisor-pipeline/scripts/init_project.mjs --root "$PWD"`
    (or the equivalent `.claude/skills/` path). This initializes or safely
-   migrates the shared schemaVersion 4 contract before selection without
+   migrates the shared schemaVersion 6 contract before selection without
    discarding or rewriting existing Finder outputs. Do not hand-compose the
    missing project files.
 3. If the exact advisor or section selection is missing, run the same

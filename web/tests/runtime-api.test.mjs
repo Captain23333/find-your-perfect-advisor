@@ -276,6 +276,127 @@ test("local runtime API enforces the run and project contracts", async (t) => {
     assert.match(staleRun.body.error, /调查配置已更新/);
   });
 
+  await t.test("application materials reuse the existing CV with exact confirmation", async () => {
+    await writeFile(
+      resolve(runtime.root, "projects", projectId, "outputs", "ranking.json"),
+      JSON.stringify({
+        rankings: [
+          { advisorProgramId: "ap-1", rank: 1, name: "Real Advisor", totalScore: 8.5 },
+        ],
+      }),
+    );
+    const saved = await json(
+      await fetch(`${runtime.baseUrl}/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          applicationMaterials: {
+            advisorProgramId: "ap-1",
+            materials: ["research_proposal", "outreach_email"],
+            order: ["research_proposal", "outreach_email"],
+          },
+        }),
+      }),
+    );
+    assert.equal(saved.status, 200);
+    const revision = saved.body.project.applicationMaterials.draft.revision;
+    const stale = await json(
+      await fetch(
+        `${runtime.baseUrl}/api/projects/${projectId}/application-materials/confirm`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ draftRevision: revision + 1 }),
+        },
+      ),
+    );
+    assert.equal(stale.status, 409);
+
+    const confirmed = await json(
+      await fetch(
+        `${runtime.baseUrl}/api/projects/${projectId}/application-materials/confirm`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ draftRevision: revision }),
+        },
+      ),
+    );
+    assert.equal(confirmed.status, 200);
+    assert.equal(
+      confirmed.body.project.applicationMaterials.confirmed.advisorProgramId,
+      "ap-1",
+    );
+    assert.equal(confirmed.body.project.readiness.modes.research_proposal.ready, false);
+    assert.match(
+      confirmed.body.project.readiness.modes.research_proposal.missing.join(" "),
+      /真实姓名/,
+    );
+
+    const missingNameRun = await json(
+      await fetch(`${runtime.baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          provider: "codex",
+          mode: "research_proposal",
+          confirmedRevision: revision,
+          prompt: "write proposal",
+        }),
+      }),
+    );
+    assert.equal(missingNameRun.status, 422);
+    assert.match(missingNameRun.body.error, /真实姓名/);
+
+    const identified = await json(
+      await fetch(`${runtime.baseUrl}/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ applicantName: "Ada Lovelace" }),
+      }),
+    );
+    assert.equal(identified.status, 200);
+    assert.equal(identified.body.project.readiness.modes.research_proposal.ready, true);
+    assert.equal(identified.body.project.cv.valid, true);
+    assert.doesNotMatch(
+      identified.body.project.readiness.modes.research_proposal.missing.join(" "),
+      /CV|简历/i,
+    );
+    assert.equal(identified.body.project.readiness.modes.outreach_email.ready, false);
+
+    const unboundRun = await json(
+      await fetch(`${runtime.baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          provider: "codex",
+          mode: "research_proposal",
+          prompt: "write proposal",
+        }),
+      }),
+    );
+    assert.equal(unboundRun.status, 409);
+    assert.match(unboundRun.body.error, /必须绑定当前确认版本/);
+
+    const staleRun = await json(
+      await fetch(`${runtime.baseUrl}/api/runs`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          provider: "codex",
+          mode: "research_proposal",
+          confirmedRevision: revision - 1,
+          prompt: "write proposal",
+        }),
+      }),
+    );
+    assert.equal(staleRun.status, 409);
+    assert.match(staleRun.body.error, /申请材料配置已更新/);
+  });
+
   await t.test("community refresh needs a current, community-scoped confirmation", async () => {
     // Confirmed, but no community-relevant dimension was selected.
     const irrelevant = await json(

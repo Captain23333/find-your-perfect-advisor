@@ -5,18 +5,23 @@ import {
   DEFAULT_DETECTIVE_SECTIONS,
   DETECTIVE_SECTIONS,
   PROJECT_SCHEMA_VERSION,
+  confirmApplicationMaterialsDraft,
   confirmInvestigationDraft,
   createStatus,
   hasCommunitySections,
   normalizeInterests,
+  normalizeApplicationMaterials,
   normalizeInvestigation,
   normalizeProjectMetadata,
   normalizeShortlistTarget,
   normalizeStatus,
   readinessForProject,
   updateInvestigationDraft,
+  updateApplicationMaterialsDraft,
+  validateApplicationMaterialsDraft,
   validateInvestigationDraftAgainstCandidates,
 } from "../../skills/advisor-pipeline/scripts/project-contract.mjs";
+import { verifyApplicationMaterialArtifacts } from "../../skills/advisor-pipeline/scripts/application-materials-artifacts.mjs";
 import { withProjectFileLock } from "../../skills/advisor-pipeline/scripts/project-file-lock.mjs";
 
 export { DEFAULT_DETECTIVE_SECTIONS, DETECTIVE_SECTIONS };
@@ -297,7 +302,38 @@ export function createProjectStore(projectRoot) {
       detectiveResults,
     );
     const candidates = await readCandidates(target);
+    const rankings = await readRankings(target);
     const cvStatus = await inspectCv(target, metadata.cv);
+    const confirmedMaterials = normalizeApplicationMaterials(
+      metadata.applicationMaterials,
+    ).confirmed;
+    const confirmedMaterialRanking = confirmedMaterials
+      ? rankings.find(
+          (item) => item.advisorProgramId === confirmedMaterials.advisorProgramId,
+        )
+      : null;
+    const materialArtifacts = confirmedMaterials
+      ? Object.fromEntries(
+          await Promise.all(
+            ["research_proposal", "outreach_email"].map(async (mode) => [
+              mode,
+              await verifyApplicationMaterialArtifacts({
+                projectPath: target,
+                mode,
+                advisorProgramId: confirmedMaterials.advisorProgramId,
+                confirmedRevision: confirmedMaterials.revision,
+                confirmedFingerprint: confirmedMaterials.fingerprint,
+                expectedAdvisorName: confirmedMaterialRanking?.name || "",
+                applicantName: metadata.applicantName,
+                cvValid: cvStatus.valid,
+              }),
+            ]),
+          ),
+        )
+      : {
+          research_proposal: { complete: false, missing: [] },
+          outreach_email: { complete: false, missing: [] },
+        };
     return {
       ...metadata,
       cv: metadata.cv
@@ -312,11 +348,14 @@ export function createProjectStore(projectRoot) {
       status: await readStatus(target),
       candidates,
       detectiveResults,
-      rankings: await readRankings(target),
+      rankings,
+      materialArtifacts,
       readiness: readinessForProject({
         metadata,
         candidates,
         detectiveResults,
+        rankings,
+        materialArtifacts,
         cvValid: cvStatus.valid,
       }),
     };
@@ -360,6 +399,7 @@ export function createProjectStore(projectRoot) {
       id: slug,
       slug,
       name: String(input.name || slug).trim(),
+      applicantName: String(input.applicantName || "").trim(),
       season: String(input.season || "").trim(),
       degree: String(input.degree || "").trim(),
       target: String(input.target || "").trim(),
@@ -440,6 +480,10 @@ export function createProjectStore(projectRoot) {
         input.name === undefined
           ? metadata.name
           : String(input.name || "").trim().slice(0, 120),
+      applicantName:
+        input.applicantName === undefined
+          ? metadata.applicantName
+          : String(input.applicantName || "").trim().slice(0, 160),
       season:
         input.season === undefined
           ? metadata.season
@@ -466,6 +510,13 @@ export function createProjectStore(projectRoot) {
           : updateInvestigationDraft(
               metadata.investigation,
               input.investigation,
+            ),
+      applicationMaterials:
+        input.applicationMaterials === undefined
+          ? metadata.applicationMaterials
+          : updateApplicationMaterialsDraft(
+              metadata.applicationMaterials,
+              input.applicationMaterials,
             ),
       schemaVersion: PROJECT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
@@ -514,6 +565,41 @@ export function createProjectStore(projectRoot) {
         expectedRevision: input.draftRevision,
         now,
       }),
+      updatedAt: now,
+    };
+    await writeJsonAtomic(projectFile, updated);
+    return getProject(slug);
+  }
+
+  async function confirmApplicationMaterialsLocked(slug, input = {}) {
+    const target = projectPath(slug);
+    const projectFile = resolve(target, "project.json");
+    const metadata = normalizeMetadata(
+      JSON.parse(await readFile(projectFile, "utf8")),
+      slug,
+    );
+    if (!Number.isInteger(input.draftRevision)) {
+      const error = new Error("缺少有效的申请材料草稿版本，请重新检查最终摘要");
+      error.code = "MISSING_DRAFT_REVISION";
+      throw error;
+    }
+    const rankings = await readRankings(target);
+    const validation = validateApplicationMaterialsDraft(
+      metadata.applicationMaterials,
+      rankings,
+    );
+    if (!validation.valid) {
+      const error = new Error(validation.errors.join("；"));
+      error.code = "INVALID_SELECTION";
+      throw error;
+    }
+    const now = new Date().toISOString();
+    const updated = {
+      ...metadata,
+      applicationMaterials: confirmApplicationMaterialsDraft(
+        metadata.applicationMaterials,
+        { expectedRevision: input.draftRevision, now },
+      ),
       updatedAt: now,
     };
     await writeJsonAtomic(projectFile, updated);
@@ -572,6 +658,8 @@ export function createProjectStore(projectRoot) {
     withProjectLock(slug, () => updateProjectLocked(slug, input));
   const confirmInvestigation = (slug, input = {}) =>
     withProjectLock(slug, () => confirmInvestigationLocked(slug, input));
+  const confirmApplicationMaterials = (slug, input = {}) =>
+    withProjectLock(slug, () => confirmApplicationMaterialsLocked(slug, input));
   const setProjectCv = (slug, cv) =>
     withProjectLock(slug, () => setProjectCvLocked(slug, cv));
   const deleteProject = (slug) =>
@@ -590,6 +678,7 @@ export function createProjectStore(projectRoot) {
     deleteProject,
     inspectCv,
     confirmInvestigation,
+    confirmApplicationMaterials,
     ensureDefaultProject,
     getProject,
     listProjects,

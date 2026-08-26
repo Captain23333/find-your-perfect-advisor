@@ -3,10 +3,11 @@ name: advisor-pipeline
 description: >
   Orchestrate the complete Advisor Atlas workflow from a real CV to a
   source-backed shortlist, objective application-feasibility screen,
-  user-selected advisor background research, and an application-ready final
-  workbook. Use when the user asks to find advisors, run the full advisor
+  user-selected advisor background research, an application-ready final
+  workbook, and optional target-specific outreach or Research Proposal
+  materials. Use when the user asks to find advisors, run the full advisor
   matching process, resume an application project, or coordinate Finder,
-  Detective, and Evaluator.
+  Detective, Evaluator, and post-evaluation application materials.
 ---
 
 # Advisor Pipeline
@@ -21,6 +22,8 @@ Intake
   -> user selects advisor-program rows and investigation sections
   -> Detective selected-section research
   -> Evaluator and application-ready workbook
+  -> user selects exact advisor-program target and material purpose
+  -> Research Proposal and/or advisor outreach, in requirement-driven order
 ```
 
 Do not create a late, independent application-requirements scrape. Capture facts
@@ -52,10 +55,22 @@ initialize the same contract before starting if it is missing:
    (or the equivalent `.claude/skills/` path). This deterministic initializer
    creates or safely migrates the shared files, writes a timestamped backup
    before normalizing an existing file, and never overwrites existing outputs.
-2. Read the real CV and any existing application notes.
-3. Collect only the missing Phase 1 inputs; do not make the user repeat facts
+2. Resolve the project's existing CV first: prefer the file referenced by
+   `project.json.cv`, then inspect `inputs/` and any explicit CV path already
+   supplied in the conversation. Read that CV and any existing application
+   notes.
+3. Treat CV intake as project-scoped and idempotent. Once a readable CV for the
+   current applicant exists, reuse that same file silently in every later
+   phase; never ask the user to upload, attach, or paste it again merely because
+   another Skill or phase is starting. Only request a replacement when no
+   readable CV exists, the stored path is broken, the file is clearly a sample
+   or for another applicant, or the user asks to update it. If one material
+   needs a fact that the CV does not contain, ask only for that fact rather than
+   requesting the whole CV again. Research-interest text alone does not unlock
+   matching when no real CV exists.
+4. Collect only the missing Phase 1 inputs; do not make the user repeat facts
    already present in those files.
-4. Validate again with the initializer's `--check` option before research.
+5. Validate again with the initializer's `--check` option before research.
 
 Do not hand-compose `project.json`. The initializer leaves unknown user inputs
 blank rather than guessing them from unrelated Finder output fields. Empty
@@ -89,8 +104,8 @@ Write real counts from artifacts. Do not populate demonstration values.
 
 ## Phase 1: Advisor Finder
 
-Require a target scope plus either a real CV or at least one research interest.
-Weights are optional. Persist the user-selected `shortlistTarget` (default 10)
+Require a target scope plus a real, readable CV. Research interests and weights
+are optional supplements, not replacements for the CV. Persist the user-selected `shortlistTarget` (default 10)
 and invoke Advisor Finder without duplicating its instructions.
 
 Finder performs a fixed low-cost scan for identity/current role, high-level
@@ -192,6 +207,49 @@ Completion requires:
 - An application-ready workbook.
 - Source, freshness, missing-field, and risk checks.
 
+## Post-evaluation application materials
+
+Read [references/application-materials-contract.md](references/application-materials-contract.md)
+before offering, confirming, researching, downloading, or generating these
+materials.
+
+After Evaluator, offer—not silently start—two target-specific Skills:
+
+- `advisor-research-proposal` for an RP, concept note, literature review,
+  methods plan, adaptation, or proposal audit.
+- `advisor-outreach` for a first email, advertised-position response, follow-up,
+  or reply.
+
+Before offering generation as ready, validate the already stored project CV and
+applicant name. This is a state check, not a new intake step: when
+`project.json.cv` still resolves to the readable CV supplied earlier in the
+pipeline, both application-material Skills must reuse it without asking the
+user for another upload. If the CV or name is missing, invalid, conflicting,
+ambiguous, or looks like a placeholder, pause and ask only for the exact input
+needed to repair that condition.
+Do not start literature downloads, create applicant-facing files, or substitute
+an example identity. An official anonymity rule may keep the name out of an RP,
+but does not waive the identity/CV preflight.
+
+Require the user to choose one exact `advisorProgramId`, the material purpose,
+and generation order. Do not infer the target from rank 1 or generate a mail merge. Read the
+current official advisor/program contact and RP requirements before choosing
+the order:
+
+- When a draft RP or concept note is required or useful for first contact, run
+  Research Proposal first and let Outreach decide whether to attach it.
+- When the first contact is only an availability/route inquiry, draft Outreach
+  first and do not manufacture a full RP attachment.
+- For an advertised project, follow its document list and selection criteria.
+
+Write post-evaluation artifacts under
+`outputs/application-materials/<advisorProgramId>/`. Ranking remains the end of
+the three analysis phases, but the Web and CLI expose these as separately
+confirmed, artifact-verified continuations. A draft without both literature
+classes, advisor/team relationship evidence, locally verified public PDFs,
+manifest hashes, and citation-audit IDs
+is partial. Never send email or submit the RP.
+
 ## Resume behavior
 
 At startup:
@@ -206,6 +264,8 @@ At startup:
    Draft-only or changed selections must return to the final confirmation gate.
 5. Reuse current sources.
 6. Query only missing, stale, or conflicting fields.
+7. If post-evaluation materials exist, resume only the chosen target and
+   material; do not regenerate ranking or other targets unless requested.
 
 Never restart the whole workflow merely because an output workbook is missing;
 regenerate the workbook from structured state.

@@ -68,14 +68,15 @@ npm run dev
 
 1. 点击“新建申请项目”，填写项目名称。
 2. 填写目标院校或地区范围。
-3. 上传真实 CV，或填写至少一个研究兴趣；权重可留空。
-4. 选择 Phase 1 希望保留的导师数量，默认 Top 10。
-5. 保存申请资料。
-6. 随时选择本机已登录的 Codex 或 Claude Code。
-7. 点击“开始寻找导师”。
-8. 最迟在 shortlist 的客观申请条件筛选前补齐目标学位和申请季。
-9. 选择重点导师，并勾选需要的背景调查维度。
-10. P2 显示“已完成”后直接查看背调结果；需要补充维度时再重新运行。
+3. 上传一份可读取的真实 CV；研究兴趣与权重可作为补充。
+4. 填写申请者真实姓名，供后续 RP 与套磁信核验。
+5. 选择 Phase 1 希望保留的导师数量，默认 Top 10。
+6. 保存申请资料。
+7. 随时选择本机已登录的 Codex 或 Claude Code。
+8. 点击“开始寻找导师”。
+9. 最迟在 shortlist 的客观申请条件筛选前补齐目标学位和申请季。
+10. 选择重点导师，并勾选需要的背景调查维度。
+11. P2 显示“已完成”后直接查看背调结果；需要补充维度时再重新运行。
 11. 生成综合排名。网页只展示前三名，完整信息在当前项目 `outputs/` 下自动生成的 Excel 中。
 
 Phase 1 的最低输入未完成前，网页和后端只阻止启动任务，不阻止用户先选择模型。候选导师、背调证据和最终排名在任务真正开始前均为 `0`，不会显示演示结果。
@@ -250,10 +251,11 @@ my-advisor-application/
 使用 advisor-pipeline 开始导师匹配。
 
 先读取当前项目中的真实 CV，并检查：
-1. 目标学校或目标范围
-2. 研究兴趣与权重
-3. 目标学位
-4. 申请季
+1. CV 是否真实、可读取
+2. 目标学校或目标范围
+3. 研究兴趣与权重
+4. 目标学位
+5. 申请季
 
 如果缺少信息，请先询问我，不要编造。
 
@@ -267,7 +269,7 @@ Phase 1 完成后不要自动选择 Top N 进入背调。请像 Web 前端一样
 
 首次直接运行时，`advisor-pipeline` 会在当前文件夹初始化与 Web
 兼容的 `project.json`、`status.json` 和 `outputs/`。CLI 与 Web 使用同一套
-结构化状态和三阶段流程，区别只在于 CLI 用编号菜单代替网页复选框。
+结构化状态、三阶段分析和后置申请材料流程，区别只在于 CLI 用编号菜单代替网页复选框。
 
 Phase 1 完成后，CLI 会显示类似下面的选择门：
 
@@ -308,6 +310,16 @@ Agent 必须在显示精确导师、维度、预计消耗和社区资料授权�
 使用 advisor-evaluator 根据已有证据生成最终排名。
 ```
 
+```text
+使用 advisor-research-proposal，先核对我的真实 CV 和真实姓名，再针对我明确
+选择的 advisorProgramId 核对官方 RP 要求，完成文献综述、研究设计和可行性审计。
+```
+
+```text
+使用 advisor-outreach，先核对我的真实 CV 和真实姓名，再针对我明确选择的
+advisorProgramId，基于导师证据和官方联系要求起草套磁信，不要发送邮件。
+```
+
 这种模式下，输出文件直接保存在你自己的申请项目文件夹中，不会出现在 Web 控制台的 `projects/` 列表里。
 
 ## 两种方式如何选择
@@ -323,7 +335,7 @@ Agent 必须在显示精确导师、维度、预计消耗和社区资料授权�
 
 通常选择一种方式作为项目的主入口：选择 Web 时由 Web 管理 `projects/`；选择直接使用 Skills 时，在你自己创建的项目文件夹中完成全部工作。
 
-## 递进式三阶段工作流
+## 递进式三阶段分析 + 申请材料
 
 ### 阶段 1：导师发现、研究匹配与客观申请筛选
 
@@ -357,14 +369,39 @@ Finder 浏览导师或项目页面时已经发现的信息会立即保存；后�
 
 评分用于辅助筛选，不替代申请者对导师风格、招生状态和合作方式的独立判断。
 
-## 四个 Skills
+### 后置申请材料：RP 与套磁信
+
+完成排名后，用户先选择精确的 `advisorProgramId` 和材料目的，再按官方要求调用：
+
+- `advisor-research-proposal`：核对目标项目格式，完成问题收窄、可追溯文献综述、
+  gap、问题—方法映射、伦理/可行性和引用审计。
+- `advisor-outreach`：核对联系规则，以“导师事实 → 申请者真实证据 → 可辩护连接”
+  起草首封、招聘回复、follow-up 或回信。
+
+两者没有固定先后。需要随首封附 RP 时先做 RP；首封只询问招生/申请路径时先写
+邮件。Web 和 CLI 都会要求再次选择精确目标、材料和顺序，并展示最终摘要等待确认。
+确认后才允许搜索、下载和写作；排名第一不会被自动选中。后置材料保存在
+`outputs/application-materials/<advisorProgramId>/`，不会自动发送或提交。
+
+每种材料都必须同时列出导师本人/团队文献与独立领域文献。实际引用只接受合法
+公开版本，PDF 下载到本地并在 `literature/manifest.json` 记录 canonical URL、
+公开获取依据、读取层级、用途、SHA-256 和文件大小；导师文献还必须记录“导师本人
+署名”或“已核验团队作者”的关系证据，领域文献不得含目标导师署名。Web 会直接列出
+每条引用及本地路径；不得绕过付费墙。缺少任一类
+文献、文件或校验信息时，本轮显示为 `partial`，不会把流畅文本冒充完成结果。
+
+完整调研和证据边界见 [`docs/OUTREACH_RP_RESEARCH.md`](docs/OUTREACH_RP_RESEARCH.md)。
+
+## 六个 Skills
 
 | Skill | 作用 |
 |---|---|
 | `advisor-finder` | 发现真实候选、完成研究匹配和客观申请筛选 |
 | `advisor-detective` | 按用户勾选维度对重点导师进行证据化背景调查 |
 | `advisor-evaluator` | 分开汇总主客观结论并生成申请就绪总表 |
-| `advisor-pipeline` | 编排完整三阶段流程 |
+| `advisor-research-proposal` | 为精确导师—项目生成或审计证据化 RP |
+| `advisor-outreach` | 为精确导师—项目起草或审计个性化套磁邮件 |
+| `advisor-pipeline` | 编排三阶段分析与后置申请材料 |
 
 Skills 源文件位于：
 
@@ -373,6 +410,8 @@ skills/
 ├── advisor-finder/
 ├── advisor-detective/
 ├── advisor-evaluator/
+├── advisor-research-proposal/
+├── advisor-outreach/
 └── advisor-pipeline/
 ```
 
@@ -386,6 +425,17 @@ skills/
 - `advisor_shortlist_<日期>.xlsx`
 - `advisor_detective_<日期>.xlsx`
 - `advisor_application_ready_<日期>.xlsx`
+- `outputs/application-materials/<advisorProgramId>/research-proposal.tex`
+- `outputs/application-materials/<advisorProgramId>/references.bib`
+- `outputs/application-materials/<advisorProgramId>/research-proposal.pdf`
+- `outputs/application-materials/<advisorProgramId>/proposal-build.json`
+- `outputs/application-materials/<advisorProgramId>/proposal-evidence.md`
+- `outputs/application-materials/<advisorProgramId>/proposal-review.md`
+- `outputs/application-materials/<advisorProgramId>/outreach-email.txt`
+- `outputs/application-materials/<advisorProgramId>/outreach-audit.md`
+- `outputs/application-materials/<advisorProgramId>/literature/manifest.json`
+- `outputs/application-materials/<advisorProgramId>/literature/advisor-work/*.pdf`
+- `outputs/application-materials/<advisorProgramId>/literature/field-work/*.pdf`
 - `outputs/candidates.json`
 - `outputs/advisor_records.json`
 - `outputs/program_records.json`
@@ -416,14 +466,15 @@ skills/
 
 | 阶段 | 必需条件 |
 | --- | --- |
-| Finder 1A（导师发现） | 目标院校或地区范围，且 CV 或至少一个研究兴趣（二选一） |
+| Finder 1A（导师发现） | 目标院校或地区范围 + 一份可读取的真实 CV |
 | Finder 1B（客观筛选） | 1A 已产出候选 + 目标学位 + 申请季 |
 | Detective（背调） | 带稳定 `advisorProgramId` 的候选 + 与当前草稿一致的已确认配置 |
 | Ranking（综合排名） | 至少一条 Detective 结果 |
+| RP / 陶瓷信 | 有效真实 CV + 已确认申请者姓名 + 当前排名中的精确 `advisorProgramId` + 材料/顺序确认快照；后一个材料还需前一个通过产物校验 |
 
-所以“开始寻找导师”只需要第一行的两项；目标学位和申请季可以稍后补齐，研究兴趣权重是可选的（不填按等权处理，不需要凑满 100%）。
+所以“开始寻找导师”需要第一行的两项；研究兴趣是 CV 之外的可选补充，不能代替 CV。目标学位和申请季可以稍后补齐，研究兴趣权重不填时按等权处理。
 
-另外请确认 Codex 或 Claude 至少有一个显示为“可用”。如果 CV 上传后被移动或删除，页面会提示“原 CV 文件已不存在或被移动”——此时它不再算作有效的匹配信号，需要重新上传或改填研究兴趣。
+另外请确认 Codex 或 Claude 至少有一个显示为“可用”。如果 CV 上传后被移动或删除，页面会提示“原 CV 文件已不存在或被移动”——此时 Finder、RP 和套磁信都会暂停，直到重新上传。RP 或套磁信缺少申请者姓名时也会明确要求补齐，不会生成示例署名成品。
 
 ### 关掉运行面板会不会把任务杀掉？
 
@@ -433,7 +484,7 @@ skills/
 
 ### 为什么模型说“做完了”，页面却显示“本轮已结束，但尚未产生 Phase 2 结果”？
 
-因为完成状态以磁盘上的真实产物为准，而不是模型的最后一句话。后端会按阶段校验 `candidates.json` / `detective-results.json` / `ranking.json`：文件缺失、JSON 非法、结果为空，或者背调结果属于旧的确认版本，都会显示为 `partial` 并列出缺了什么。
+因为完成状态以磁盘上的真实产物为准，而不是模型的最后一句话。后端会按阶段校验 `candidates.json` / `detective-results.json` / `ranking.json`；RP 和陶瓷信还会校验确认版本、两类文献、目标导师姓名、导师/团队关系证据、本地 PDF、manifest 哈希和审计中的 literatureId。文件缺失、关系错配、JSON 非法、结果为空或属于旧确认版本，都会显示为 `partial` 并列出缺了什么。
 
 ### Web 为什么检测不到 Codex 或 Claude？
 
@@ -494,7 +545,7 @@ npm run dev
 
 ### 可以从 Web 切换到直接使用 Skills 吗？
 
-可以。Web 创建的每个项目已经包含 `.agents/skills/` 和 `.claude/skills/`，两边共用同一套 schemaVersion 4 契约。
+可以。Web 创建的每个项目已经包含 `.agents/skills/` 和 `.claude/skills/`，两边共用同一套 schemaVersion 6 契约。
 
 ```bash
 cd projects/<project-id>
@@ -509,6 +560,21 @@ codex   # 或 claude
 ```bash
 node .agents/skills/advisor-pipeline/scripts/render_investigation_menu.mjs --root "$PWD"
 ```
+
+完成排名后，申请材料同样先使用确定性菜单与确认脚本：
+
+```bash
+node .agents/skills/advisor-pipeline/scripts/render_application_materials_menu.mjs --root "$PWD"
+node .agents/skills/advisor-pipeline/scripts/confirm_application_materials.mjs \
+  --root "$PWD" --confirmed-by-user \
+  --advisor-id exact-advisor-program-id \
+  --materials research_proposal,outreach_email \
+  --order research_proposal,outreach_email
+```
+
+Web 管理的项目还可在仓库 `web/` 目录运行
+`npm run backend -- materials-status --project <project-id>`，直接列出每项材料的
+引用分类、题名、作者、canonical URL 和本地 PDF 绝对路径。
 
 ### 项目里的 skills 会随仓库更新吗？
 

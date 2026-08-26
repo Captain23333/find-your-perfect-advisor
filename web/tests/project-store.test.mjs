@@ -36,7 +36,7 @@ test("project store persists exact investigation configuration", async () => {
     );
     assert.deepEqual(project.investigation.draft.selectedAdvisorProgramIds, []);
     assert.equal(project.investigation.confirmed, null);
-    assert.equal(project.schemaVersion, 4);
+    assert.equal(project.schemaVersion, 6);
     assert.equal(project.readiness.phase1Ready, false);
 
     await writeFile(
@@ -50,6 +50,14 @@ test("project store persists exact investigation configuration", async () => {
       ]),
     );
 
+    const cvPath = resolve(project.path, "inputs", "cv.pdf");
+    await writeFile(cvPath, "%PDF-1.4 real CV");
+    await store.setProjectCv("test-project", {
+      name: "cv.pdf",
+      path: cvPath,
+      size: 16,
+      type: "application/pdf",
+    });
     const updated = await store.updateProject("test-project", {
       target: "US HCI programs",
       shortlistTarget: 15,

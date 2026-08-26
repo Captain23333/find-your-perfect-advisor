@@ -8,15 +8,16 @@
 - 多个申请项目的独立目录、状态和运行记录
 - Codex 订阅、Claude 订阅与自定义 Responses API 三种执行方式
 - CV 上传、递进式三阶段工作流、客观申请筛选、候选导师和背调状态
+- 排名后的精确导师/材料/顺序确认，以及 LaTeX/BibTeX/PDF RP、可复制陶瓷信和本地文献核验包；页面直接列出引用，导师文献需通过本人署名或公开团队关系核验
 - 精确导师—项目选择和勾选式调查维度
 - 显式授权、刷新和清除的本地社区资料缓存
 - 从网页启动、停止并实时查看本地 Agent 事件流
 - 在网页中处理 Agent 的命令、文件和网络授权请求
 - 不经过网页、直接从终端调用同一套后端
 
-新项目从真实空白状态开始：CV、目标学位、申请季、目标范围和研究兴趣均为空，界面只用“例如……”提示填写方式。候选导师、背调证据和最终排名也全部显示 `0`。
+新项目从真实空白状态开始：CV、申请者姓名、目标学位、申请季、目标范围和研究兴趣均为空，界面只用“例如……”提示填写方式。候选导师、背调证据和最终排名也全部显示 `0`。
 
-Phase 1 只要求目标范围，以及 CV 或至少一个研究兴趣。研究兴趣和权重都可选；提供兴趣但不填写权重时会自动等权。目标学位和申请季最迟在 shortlist 的客观申请条件筛选前补齐。用户可以设置希望保留的 shortlist 数量，默认 Top 10。
+Phase 1 要求目标范围和一份可读取的真实 CV。研究兴趣和权重是 CV 之外的可选补充；提供兴趣但不填写权重时会自动等权。目标学位和申请季最迟在 shortlist 的客观申请条件筛选前补齐。RP 与套磁信还要求已确认的申请者真实姓名。用户可以设置希望保留的 shortlist 数量，默认 Top 10。
 
 ## 本地启动
 
@@ -62,7 +63,7 @@ projects/
 
 网页和终端后端使用同一个项目目录。`projects/` 和运行配置目录 `.advisor-atlas/` 均已加入 Git 忽略列表，避免把个人申请材料误提交到仓库。
 
-每次启动 Agent 前，后端会把仓库当前版本的四个 Skills 同步到项目的 `.agents/skills/` 和 `.claude/skills/`；个人 CV、输出、社区缓存和项目选择不会被覆盖。
+每次启动 Agent 前，后端会把仓库当前版本的全部 Skills（包括后置 RP 与套磁信 Skills）同步到项目的 `.agents/skills/` 和 `.claude/skills/`；个人 CV、输出、社区缓存和项目选择不会被覆盖。
 
 每次运行阶段完成后会更新项目根目录的 `status.json`。Finder 会更新候选、导师、项目和证据记录；网页在运行结束后重新读取这些文件。候选行使用稳定的 `advisorProgramId`，同名导师或多项目不会仅靠姓名对齐。
 
@@ -119,6 +120,7 @@ npm run backend -- create \
 # 填写申请信息
 npm run backend -- update \
   --project my-phd-application \
+  --applicant-name "Your Real Name" \
   --season "2028 Fall" \
   --degree "PhD" \
   --target "美国 HCI / AI 项目" \
@@ -134,6 +136,25 @@ npm run backend -- run \
   --project my-phd-application \
   --provider codex \
   --prompt "执行 Phase 1 候选导师检索"
+
+# 排名完成后先展示完整申请材料菜单，再明确确认
+npm run backend -- materials-menu --project my-phd-application
+npm run backend -- materials-confirm \
+  --project my-phd-application \
+  --advisor-id exact-advisor-program-id \
+  --materials research_proposal,outreach_email \
+  --order research_proposal,outreach_email \
+  --confirmed-by-user
+
+# 生成后在 CLI 直接查看分类、题名、作者、canonical URL 与本地 PDF 路径
+npm run backend -- materials-status --project my-phd-application
+
+# 按已确认顺序运行；后一个材料会等前一个产物通过校验
+npm run backend -- run \
+  --project my-phd-application \
+  --mode research_proposal \
+  --provider codex \
+  --prompt "生成已确认目标的 Research Proposal"
 ```
 
 创建成功后，命令会返回自动生成的项目 ID。后续命令把上面示例中的 `my-phd-application` 替换成该 ID；如果希望自己指定，也可以在创建命令末尾加 `--slug my-phd-application`。

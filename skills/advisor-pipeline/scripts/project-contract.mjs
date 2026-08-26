@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 
-export const PROJECT_SCHEMA_VERSION = 4;
+export const PROJECT_SCHEMA_VERSION = 6;
 export const STATUS_SCHEMA_VERSION = 2;
+
+export const APPLICATION_MATERIAL_IDS = [
+  "research_proposal",
+  "outreach_email",
+];
 
 export const DEFAULT_DETECTIVE_SECTIONS = [
   "identity_current_role",
@@ -77,6 +82,43 @@ export const STRUCTURED_OUTPUT_FILES = [
 
 function text(value, limit = 500) {
   return String(value ?? "").trim().slice(0, limit);
+}
+
+export function isUsableApplicantName(value) {
+  const name = text(value, 160);
+  if (name.length < 2) return false;
+  const key = name
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\s_\-\[\]{}()<>:：]+/g, "");
+  return !new Set([
+    "name",
+    "yourname",
+    "applicantname",
+    "fullname",
+    "test",
+    "testuser",
+    "sample",
+    "sampleuser",
+    "placeholder",
+    "姓名",
+    "申请者姓名",
+    "真实姓名",
+    "待填写",
+  ]).has(key);
+}
+
+export function isSafeAdvisorProgramId(value) {
+  const id = String(value ?? "").trim();
+  return Boolean(
+    id &&
+      id.length <= 500 &&
+      id !== "." &&
+      id !== ".." &&
+      !id.includes("/") &&
+      !id.includes("\\") &&
+      !id.includes("\0"),
+  );
 }
 
 function validTimestamp(value, fallback) {
@@ -296,6 +338,163 @@ export function isInvestigationConfirmationCurrent(investigation) {
   );
 }
 
+function normalizeMaterialList(input, fallback = []) {
+  if (!Array.isArray(input)) return [...fallback];
+  return [
+    ...new Set(input.map(String).filter((item) => APPLICATION_MATERIAL_IDS.includes(item))),
+  ];
+}
+
+function normalizeApplicationMaterialSelection(input, fallback = {}) {
+  const source = input && typeof input === "object" ? input : {};
+  const materials = normalizeMaterialList(source.materials, fallback.materials || []);
+  const requestedOrder = normalizeMaterialList(source.order, fallback.order || []);
+  const order = [
+    ...requestedOrder.filter((item) => materials.includes(item)),
+    ...materials.filter((item) => !requestedOrder.includes(item)),
+  ];
+  return {
+    advisorProgramId: text(
+      source.advisorProgramId ??
+        source.advisor_program_id ??
+        fallback.advisorProgramId ??
+        "",
+      500,
+    ),
+    materials,
+    order,
+    literaturePolicy: {
+      advisorWorks: true,
+      fieldWorks: true,
+      downloadOpenAccess: true,
+    },
+  };
+}
+
+export function applicationMaterialsFingerprint(selection) {
+  const normalized = normalizeApplicationMaterialSelection(selection);
+  return createHash("sha256")
+    .update(JSON.stringify(normalized))
+    .digest("hex");
+}
+
+function normalizeApplicationMaterialsConfirmed(input, now) {
+  if (!input || typeof input !== "object") return null;
+  const selection = normalizeApplicationMaterialSelection(input);
+  return {
+    ...selection,
+    revision: Math.max(0, Number(input.revision) || 0),
+    confirmedAt: validTimestamp(input.confirmedAt, now),
+    fingerprint:
+      text(input.fingerprint, 128) || applicationMaterialsFingerprint(selection),
+    source: input.source === "legacy_artifact" ? "legacy_artifact" : "user_confirmed",
+  };
+}
+
+export function normalizeApplicationMaterials(
+  input,
+  now = new Date().toISOString(),
+) {
+  const source = input && typeof input === "object" ? input : {};
+  const draftSource = source.draft ?? source;
+  const selection = normalizeApplicationMaterialSelection(draftSource);
+  return {
+    draft: {
+      ...selection,
+      revision: Math.max(0, Number(draftSource.revision) || 0),
+      updatedAt: validTimestamp(draftSource.updatedAt, now),
+    },
+    confirmed: normalizeApplicationMaterialsConfirmed(source.confirmed, now),
+  };
+}
+
+export function updateApplicationMaterialsDraft(
+  existing,
+  patch,
+  now = new Date().toISOString(),
+) {
+  const current = normalizeApplicationMaterials(existing, now);
+  const source = patch?.draft ?? patch ?? {};
+  const nextSelection = normalizeApplicationMaterialSelection(source, current.draft);
+  const currentSelection = normalizeApplicationMaterialSelection(current.draft);
+  const changed = !sameSelection(nextSelection, currentSelection);
+  return {
+    draft: {
+      ...nextSelection,
+      revision: changed ? current.draft.revision + 1 : current.draft.revision,
+      updatedAt: changed ? now : current.draft.updatedAt,
+    },
+    confirmed: current.confirmed,
+  };
+}
+
+export function isApplicationMaterialsConfirmationCurrent(applicationMaterials) {
+  const current = normalizeApplicationMaterials(applicationMaterials);
+  if (!current.confirmed) return false;
+  return (
+    current.confirmed.revision === current.draft.revision &&
+    current.confirmed.fingerprint ===
+      applicationMaterialsFingerprint(current.draft)
+  );
+}
+
+export function validateApplicationMaterialsDraft(
+  applicationMaterials,
+  rankings,
+) {
+  const current = normalizeApplicationMaterials(applicationMaterials);
+  const errors = [];
+  if (!current.draft.advisorProgramId) {
+    errors.push("请选择一个精确的导师—项目组合");
+  } else if (!isSafeAdvisorProgramId(current.draft.advisorProgramId)) {
+    errors.push("所选 advisorProgramId 含不安全的路径字符");
+  }
+  if (!current.draft.materials.length) {
+    errors.push("请至少选择一种申请材料");
+  }
+  if (current.draft.order.length !== current.draft.materials.length) {
+    errors.push("材料生成顺序与所选材料不一致");
+  }
+  const rankingIds = new Set(
+    (Array.isArray(rankings) ? rankings : [])
+      .map((item) => String(item?.advisorProgramId || "").trim())
+      .filter(Boolean),
+  );
+  if (
+    current.draft.advisorProgramId &&
+    !rankingIds.has(current.draft.advisorProgramId)
+  ) {
+    errors.push("所选导师—项目组合不在当前最终排名中");
+  }
+  return { valid: errors.length === 0, errors, draft: current.draft };
+}
+
+export function confirmApplicationMaterialsDraft(
+  applicationMaterials,
+  { expectedRevision, now = new Date().toISOString() } = {},
+) {
+  const current = normalizeApplicationMaterials(applicationMaterials, now);
+  if (!Number.isInteger(expectedRevision)) {
+    const error = new Error("缺少有效的申请材料草稿版本，请重新检查最终摘要");
+    error.code = "MISSING_DRAFT_REVISION";
+    throw error;
+  }
+  if (expectedRevision !== current.draft.revision) {
+    const error = new Error("申请材料草稿已发生变化，请重新检查最终摘要");
+    error.code = "STALE_DRAFT";
+    throw error;
+  }
+  const confirmed = {
+    ...normalizeApplicationMaterialSelection(current.draft),
+    revision: current.draft.revision,
+    confirmedAt: now,
+    fingerprint: "",
+    source: "user_confirmed",
+  };
+  confirmed.fingerprint = applicationMaterialsFingerprint(confirmed);
+  return { draft: current.draft, confirmed };
+}
+
 export function communityRefreshEligibility(investigation) {
   const current = normalizeInvestigation(investigation);
   if (!current.confirmed) {
@@ -398,6 +597,7 @@ export function normalizeProjectMetadata(
     id,
     slug,
     name: text(source.name || slug, 120) || "未命名申请项目",
+    applicantName: text(source.applicantName ?? source.applicant_name, 160),
     season: text(source.season, 80),
     degree: text(source.degree, 80),
     target: text(source.target, 500),
@@ -417,6 +617,10 @@ export function normalizeProjectMetadata(
           }
         : null,
     investigation: normalizeInvestigation(source.investigation, now),
+    applicationMaterials: normalizeApplicationMaterials(
+      source.applicationMaterials,
+      now,
+    ),
     createdAt,
     updatedAt: validTimestamp(source.updatedAt, createdAt),
   };
@@ -453,18 +657,28 @@ export function normalizeProjectMetadata(
     }
   }
   delete normalized.shortlist_target;
+  delete normalized.applicant_name;
   return normalized;
 }
 
 // Every stage has its own preconditions. Checking `phase1Ready` for all of
 // them locked migrated projects — ones that already have candidates and
 // detective results but a stale CV path — out of Phase 2 and Phase 3.
-export const RUN_MODE_IDS = ["finder", "finder_objective", "detective", "ranking"];
+export const RUN_MODE_IDS = [
+  "finder",
+  "finder_objective",
+  "detective",
+  "ranking",
+  "research_proposal",
+  "outreach_email",
+];
 
 export function readinessForProject({
   metadata,
   candidates = [],
   detectiveResults = null,
+  rankings = [],
+  materialArtifacts = null,
   cvValid = false,
 } = {}) {
   const source = metadata && typeof metadata === "object" ? metadata : {};
@@ -473,9 +687,9 @@ export function readinessForProject({
   const checks = [
     { key: "target", label: "填写目标院校或地区范围", complete: Boolean(source.target) },
     {
-      key: "matching_signal",
-      label: "上传 CV 或填写至少一个研究兴趣",
-      complete: hasCv || hasInterests,
+      key: "cv",
+      label: "上传可读取的真实 CV",
+      complete: hasCv,
     },
   ];
   const objectiveChecks = [
@@ -517,6 +731,43 @@ export function readinessForProject({
 
   const rankingMissing = detectiveDone ? [] : ["先完成一轮导师背调并生成结果"];
 
+  const ranked = Array.isArray(rankings) && rankings.length > 0;
+  const materials = normalizeApplicationMaterials(source.applicationMaterials);
+  const materialsConfirmationCurrent =
+    isApplicationMaterialsConfirmationCurrent(materials);
+  const materialBaseMissing = [
+    ...(ranked ? [] : ["先完成最终排名"]),
+    ...(hasCv ? [] : ["上传可读取的真实 CV"]),
+    ...(isUsableApplicantName(source.applicantName)
+      ? []
+      : ["填写并确认申请者真实姓名"]),
+    ...(materials.confirmed ? [] : ["最终确认申请材料配置"]),
+    ...(materials.confirmed && !materialsConfirmationCurrent
+      ? ["申请材料选择已变化，请重新最终确认"]
+      : []),
+  ];
+  function materialModeMissing(materialId) {
+    const missing = [...materialBaseMissing];
+    if (
+      materials.confirmed &&
+      !materials.confirmed.materials.includes(materialId)
+    ) {
+      missing.push("当前确认快照没有选择此材料");
+    }
+    if (materials.confirmed && materialsConfirmationCurrent) {
+      const position = materials.confirmed.order.indexOf(materialId);
+      const earlier = position > 0 ? materials.confirmed.order.slice(0, position) : [];
+      for (const earlierMaterial of earlier) {
+        if (!materialArtifacts?.[earlierMaterial]?.complete) {
+          missing.push(`请先完成 ${earlierMaterial}`);
+        }
+      }
+    }
+    return [...new Set(missing)];
+  }
+  const proposalMissing = materialModeMissing("research_proposal");
+  const outreachMissing = materialModeMissing("outreach_email");
+
   const modes = {
     finder: { ready: !finderMissing.length, missing: finderMissing },
     finder_objective: {
@@ -525,6 +776,14 @@ export function readinessForProject({
     },
     detective: { ready: !detectiveMissing.length, missing: detectiveMissing },
     ranking: { ready: !rankingMissing.length, missing: rankingMissing },
+    research_proposal: {
+      ready: !proposalMissing.length,
+      missing: proposalMissing,
+    },
+    outreach_email: {
+      ready: !outreachMissing.length,
+      missing: outreachMissing,
+    },
   };
 
   return {
@@ -537,7 +796,7 @@ export function readinessForProject({
     missing: finderMissing,
     objectiveChecks,
     objectiveMissing,
-    matchingSignal: hasCv ? "cv" : hasInterests ? "interests" : "none",
+    matchingSignal: hasCv ? "cv" : "none",
     interestWeightTotal: hasInterests ? 100 : 0,
     cvValid: hasCv,
     modes,
@@ -593,6 +852,9 @@ export function validateProjectMetadata(input) {
       errors.push(`${key} 必须是非空字符串`);
     }
   }
+  if (typeof input.applicantName !== "string") {
+    errors.push("applicantName 必须是字符串");
+  }
   if (!Array.isArray(input.interests)) {
     errors.push("interests 必须是数组");
   } else if (
@@ -620,6 +882,25 @@ export function validateProjectMetadata(input) {
       !input.investigation.confirmed.fingerprint)
   ) {
     errors.push("investigation.confirmed 必须是完整确认快照或 null");
+  }
+  if (typeof input.applicationMaterials?.draft?.advisorProgramId !== "string") {
+    errors.push("applicationMaterials.draft.advisorProgramId 必须是字符串");
+  }
+  if (!Array.isArray(input.applicationMaterials?.draft?.materials)) {
+    errors.push("applicationMaterials.draft.materials 必须是数组");
+  }
+  if (!Array.isArray(input.applicationMaterials?.draft?.order)) {
+    errors.push("applicationMaterials.draft.order 必须是数组");
+  }
+  if (
+    input.applicationMaterials?.confirmed !== null &&
+    input.applicationMaterials?.confirmed !== undefined &&
+    (!input.applicationMaterials.confirmed.advisorProgramId ||
+      !Array.isArray(input.applicationMaterials.confirmed.materials) ||
+      !Array.isArray(input.applicationMaterials.confirmed.order) ||
+      !input.applicationMaterials.confirmed.fingerprint)
+  ) {
+    errors.push("applicationMaterials.confirmed 必须是完整确认快照或 null");
   }
   return { valid: errors.length === 0, errors };
 }

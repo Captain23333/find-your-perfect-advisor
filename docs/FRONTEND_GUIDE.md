@@ -8,9 +8,10 @@
 
 1. 新建申请项目。
 2. 填写目标范围。
-3. 上传 CV，或至少填写一个研究兴趣。
-4. 选择希望保留的 shortlist 数量。
-5. 启动导师搜索。
+3. 上传一份可读取的真实 CV；研究兴趣是可选补充，不能代替 CV。
+4. 填写申请者真实姓名；Finder 不依赖姓名显示，但 RP 与套磁信会把它作为生成门槛。
+5. 选择希望保留的 shortlist 数量。
+6. 启动导师搜索。
 
 Phase 1 完成后，前端展示 shortlist。此时选择真正感兴趣的导师—项目组合，再进入 Phase 2。Phase 1 不自动调查所有导师的社区风评。
 
@@ -59,6 +60,17 @@ Phase 3 复用 Phase 1 和 Phase 2 已有信息，不应重新执行导师发现
 
 完整结果不需要从浏览器下载。页面会显示当前项目 `outputs/` 的本地路径，请直接在文件夹中打开 Excel。
 
+### 排名后的申请材料（独立确认）
+
+排名完成后，页面提供可选的 RP / 陶瓷信区。用户必须从完整排名中选择一个精确
+`advisorProgramId`，勾选材料并确定顺序，再检查最终摘要并确认。草稿变化会立即
+使旧确认失效；系统不会自动使用排名第一，也不会批量生成。
+
+每个材料运行必须同时核验 `advisor_work` 与 `field_work`。实际引用文献从合法公开
+来源下载到目标目录，manifest 记录 URL、公开获取依据、读取层级、本地路径、用途、
+SHA-256 和文件大小。第二个材料只有在已确认顺序中的前一个材料通过产物校验后才解锁。
+页面不会发送邮件或提交 RP。
+
 ## 如何判断一个阶段是否真的完成
 
 前端不能只根据 `status.json` 中的阶段名称判断完成，因为中断的 Agent 可能已经提前更新状态。
@@ -66,6 +78,8 @@ Phase 3 复用 Phase 1 和 Phase 2 已有信息，不应重新执行导师发现
 - Phase 1 完成：`outputs/candidates.json` 是合法数组、至少一个候选，且每个候选都有稳定的 `advisorProgramId`。
 - Phase 2 完成：`outputs/detective-results.json` 非空，`confirmedRevision` / `confirmedFingerprint` 与本次确认一致，每个已选维度都有结论或显式的 `not_completed` 标记。
 - Phase 3 完成：`outputs/ranking.json` 是合法排名数组，且至少有一条带 `rank` 或可比较分数的结果。
+- RP 完成：当前真实 CV 可读取且申请者姓名已确认；先记录目标项目官方文档类型、模板和篇幅；`research-proposal.tex`、`references.bib`、编译后的 `research-proposal.pdf`、`proposal-build.json` 和两个审计文件均存在，源码/PDF 哈希与确认版本一致。manifest 同时包含导师/团队与领域文献；导师文献必须记录可核验的本人署名或团队作者关系，领域文献不得把导师署名论文伪装成独立证据；BibTeX key 使用 literatureId，所有实际引用均有合法公开本地 PDF 并在 `proposal-evidence.md` 记录。若官方要求匿名 RP，姓名可不印在 PDF 上，但前置身份核验不能跳过。
+- 陶瓷信完成：当前真实 CV 可读取、申请者姓名已确认且最终签名使用该姓名；干净可复制的 `outreach-email.txt` 与 `outreach-audit.md` 存在，并通过同样的文献包与关系证据校验；所有论文驱动的个性化在审计中记录 literatureId。Web 会直接列出 ID、分类、题名、作者、canonical URL 和本地路径。对外正文不得出现内部 TEST/DRAFT/DO NOT SEND/SUBMIT 标记。
 
 这套校验由后端在任务结束时执行（`web/local-runtime/run-artifacts.mjs`），前端不再自行判断。运行状态因此有六种：
 
@@ -104,7 +118,7 @@ projects/<project-id>/
 └── runs/
 ```
 
-- `project.json` 保存用户输入、调查草稿和最终确认快照；草稿不能直接授权背调。
+- `project.json` 保存用户输入、调查草稿/确认快照，以及独立的申请材料草稿/确认快照；草稿不能直接授权背调、搜索文献或写材料。
 - `status.json` 保存轻量阶段计数，不是结果内容的唯一依据。
 - `outputs/` 保存 JSON、Excel 和报告。
 - `runs/` 保存每次 Agent 运行事件。

@@ -20,7 +20,15 @@ field-level source record already supports the needed fact.
 Require to start Phase 1:
 
 - Target schools, regions, departments, or ranking scope.
-- Either a real CV/candidate profile or at least one research interest.
+- A real, readable CV for the actual applicant. A research-interest list alone
+  is not a substitute because fit, transferability, and competitiveness are
+  applicant-relative judgments.
+
+First resolve an existing project CV from `project.json.cv`, `inputs/`, or an
+explicit path already supplied by the user. Reuse it without asking for another
+upload. Request a CV only when no usable current-applicant CV can be found, or
+request a replacement when the stored file is unreadable, clearly a sample, or
+belongs to someone else.
 
 Target degree and intake may be added after discovery, but require them before
 the objective application-feasibility pass. Research-interest weights are
@@ -53,11 +61,15 @@ Structured JSON is the source of truth.
 ### 1. Intake and normalize
 
 1. Parse education, skills, publications, projects, awards, and research
-   interests from the real CV when provided.
+   interests from the real CV.
 2. Combine CV-derived signals with any user-entered research interests. Do not
    require the user to repeat interests already clear from the CV.
-3. Confirm the target scope and `shortlistTarget`.
-4. Record degree, intake, and hard constraints when present. If degree or intake
+3. If no existing CV can be resolved, or it is unreadable, clearly a sample, or
+   belongs to a different person than the user identifies, stop before
+   discovery and request a real CV. Do not ask again when the project's current
+   CV has already passed these checks.
+4. Confirm the target scope and `shortlistTarget`.
+5. Record degree, intake, and hard constraints when present. If degree or intake
    is missing, discovery may continue but the objective screen must pause.
 
 ### 2. Broad discovery

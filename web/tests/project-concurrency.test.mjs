@@ -163,7 +163,7 @@ test("a CV whose file disappeared stops counting as a matching signal", async ()
     assert.match(broken.cv.issue, /不存在|移动/);
     assert.equal(broken.readiness.cvValid, false);
     assert.ok(
-      broken.readiness.missing.includes("上传 CV 或填写至少一个研究兴趣"),
+      broken.readiness.missing.includes("上传可读取的真实 CV"),
       "an invalid CV must not satisfy the matching-signal check",
     );
   } finally {
@@ -270,7 +270,8 @@ test("readiness matrix walks the whole pipeline as inputs arrive", () => {
     investigation: { draft: { selectedAdvisorProgramIds: [], selectedSections: [] } },
   };
   const start = readinessForProject({ metadata: base, candidates: [] });
-  assert.equal(start.modes.finder.ready, true);
+  assert.equal(start.modes.finder.ready, false);
+  assert.match(start.modes.finder.missing.join(" "), /真实 CV/);
   assert.equal(start.modes.finder_objective.ready, false);
   assert.match(start.modes.finder_objective.missing.join(" "), /导师发现/);
   assert.equal(start.modes.detective.ready, false);
@@ -279,6 +280,7 @@ test("readiness matrix walks the whole pipeline as inputs arrive", () => {
   const afterFinder = readinessForProject({
     metadata: { ...base, degree: "PhD", season: "2027 Fall" },
     candidates: [{ advisorProgramId: "ap-1" }],
+    cvValid: true,
   });
   assert.equal(afterFinder.modes.finder_objective.ready, true);
 });
