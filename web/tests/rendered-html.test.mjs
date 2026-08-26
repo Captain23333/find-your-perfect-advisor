@@ -30,6 +30,10 @@ test("server-renders the advisor console", async () => {
   const html = await response.text();
   assert.match(html, /<title>Advisor Atlas · 导师匹配控制台<\/title>/i);
   assert.match(html, /导师匹配进度/);
+  assert.match(html, /陶瓷信与 RP/);
+  assert.match(html, /陶瓷信与 Research Proposal/);
+  assert.match(html, /两项材料共享同一个已确认导师—项目目标，但分别生成、分别校验/);
+  assert.match(html, /先完成候选导师发现/);
   assert.match(html, /优先候选导师/);
   assert.match(html, /本地项目 · 文件本地保存/);
     assert.match(html, /Phase 1 0\/2/);

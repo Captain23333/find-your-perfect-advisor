@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Provider = "Claude Code" | "Codex" | "Custom API";
-type View = "overview" | "candidates" | "evidence" | "ranking";
+type View = "overview" | "candidates" | "evidence" | "ranking" | "materials";
 type RunnerMode =
   | "finder"
   | "detective"
@@ -702,6 +702,38 @@ export default function Home() {
   ].some((section) => selectedSections.has(section));
   const confirmedInvestigation = activeProject?.investigation?.confirmed || null;
   const confirmedMaterials = activeProject?.applicationMaterials?.confirmed || null;
+  const materialArtifacts = activeProject?.materialArtifacts;
+  const completedMaterialCount = ["outreach_email", "research_proposal"].filter(
+    (material) =>
+      materialArtifacts?.[
+        material as "outreach_email" | "research_proposal"
+      ]?.complete,
+  ).length;
+  const materialWorkflowBlock = !rankingComplete
+    ? projectStatus.candidateCount === 0
+      ? {
+          title: "先完成候选导师发现",
+          description: "申请材料必须绑定真实导师—项目组合，请先从 CV 和申请目标建立候选名单。",
+          action: "前往候选导师",
+          view: "candidates" as View,
+        }
+      : detectiveEvidenceCount === 0
+        ? {
+            title: "先完成重点导师背调",
+            description: "请先选择重点导师并完成证据核验，再进入最终目标确认。",
+            action: "前往背调证据",
+            view: "evidence" as View,
+          }
+        : {
+            title: "先生成最终排名",
+            description: "背调已经具备基础证据，请先形成可追溯排名，再精确选择导师—项目组合。",
+            action: "前往最终排名",
+            view: "ranking" as View,
+          }
+    : null;
+  const applicantIdentityReady = Boolean(
+    activeProject?.cv?.valid && activeProject?.applicantName?.trim(),
+  );
   const materialOrderList = [...selectedMaterials].sort((left, right) => {
     const preferred = materialOrder === "research_proposal_first"
       ? ["research_proposal", "outreach_email"]
@@ -1167,7 +1199,10 @@ export default function Home() {
   }
 
   function focusApplicationInput() {
-    intakeRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setView("overview");
+    window.requestAnimationFrame(() => {
+      intakeRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
     showNotice(
       activeProject?.cv && !activeProject.cv.valid
         ? activeProject.cv.issue || "CV 文件已失效，请重新上传"
@@ -1379,10 +1414,10 @@ export default function Home() {
               setView("ranking");
               showNotice("综合排名已生成");
             } else if (mode === "research_proposal") {
-              setView("ranking");
+              setView("materials");
               showNotice("Research Proposal 与本地文献核验包已生成");
             } else if (mode === "outreach_email") {
-              setView("ranking");
+              setView("materials");
               showNotice("陶瓷信、引用审计与本地文献核验包已生成");
             } else {
               setView("candidates");
@@ -1804,28 +1839,26 @@ export default function Home() {
     将结构化排名写入 outputs/ranking.json，并按 Skill 的确定性脚本生成 outputs/advisor_application_ready_YYYYMMDD.xlsx。`, "ranking");
   }
 
-  function toggleMaterial(material: "research_proposal" | "outreach_email") {
-    setSelectedMaterials((current) => {
-      const next = new Set(current);
-      if (next.has(material)) next.delete(material);
-      else next.add(material);
-      return next;
-    });
-    setMaterialsConfirmOpen(false);
-  }
-
-  async function saveApplicationMaterialsDraft(showConfirmation = true) {
+  async function saveApplicationMaterialsDraft(
+    showConfirmation = true,
+    override?: {
+      materials: Set<"research_proposal" | "outreach_email">;
+      order: Array<"research_proposal" | "outreach_email">;
+    },
+  ) {
     if (!activeProjectId) throw new Error("请先选择申请项目");
     if (!materialAdvisorId) throw new Error("请选择一个精确导师—项目组合");
-    if (!selectedMaterials.size) throw new Error("请至少选择一种申请材料");
+    const materials = override?.materials || selectedMaterials;
+    const order = override?.order || materialOrderList;
+    if (!materials.size) throw new Error("请至少选择一种申请材料");
     const response = await fetch(`${runtimeUrl}/api/projects/${activeProjectId}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         applicationMaterials: {
           advisorProgramId: materialAdvisorId,
-          materials: [...selectedMaterials],
-          order: materialOrderList,
+          materials: [...materials],
+          order,
         },
       }),
     });
@@ -1840,10 +1873,35 @@ export default function Home() {
     return payload.project as AdvisorProject;
   }
 
-  async function reviewApplicationMaterials() {
+  async function prepareApplicationMaterial(
+    material: "research_proposal" | "outreach_email",
+  ) {
+    if (materialWorkflowBlock) {
+      showNotice(materialWorkflowBlock.title);
+      openProjectView(materialWorkflowBlock.view);
+      return;
+    }
+    if (!applicantIdentityReady) {
+      showNotice("请先补齐真实姓名并确认原 CV 仍可读取");
+      focusApplicationInput();
+      return;
+    }
+    if (!materialAdvisorId) {
+      showNotice("请先选择一个精确导师—项目组合");
+      return;
+    }
+    const nextMaterials = new Set<"research_proposal" | "outreach_email">([material]);
+    const nextOrder = [material];
+    setSelectedMaterials(nextMaterials);
+    setMaterialOrder(
+      material === "outreach_email" ? "outreach_email_first" : "research_proposal_first",
+    );
     setMaterialsSaving(true);
     try {
-      await saveApplicationMaterialsDraft(true);
+      await saveApplicationMaterialsDraft(true, {
+        materials: nextMaterials,
+        order: nextOrder,
+      });
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "申请材料配置保存失败");
     } finally {
@@ -2128,6 +2186,13 @@ ${mode === "research_proposal"
             onClick={() => openProjectView("ranking")}
           >
             <span className="nav-icon">◇</span> 最终排名
+          </button>
+          <button
+            className={view === "materials" ? "active" : ""}
+            onClick={() => openProjectView("materials")}
+          >
+            <span className="nav-icon">✦</span> 陶瓷信与 RP
+            <em>{completedMaterialCount}/2</em>
           </button>
 
           <section className="project-nav" aria-label="申请项目">
@@ -3214,184 +3279,6 @@ ${mode === "research_proposal"
                 <p className="ranking-footnote">
                   页面仅展示前三名和最关键的待确认项，其余候选与完整字段请查看 Excel。
                 </p>
-                <article className="panel application-materials-panel">
-                  <div className="materials-heading">
-                    <div>
-                      <span className="section-kicker">OPTIONAL NEXT STEP</span>
-                      <h2>确认后生成陶瓷信 / Research Proposal</h2>
-                      <p>
-                        不自动选择第一名。每次只绑定一个精确导师—项目组合，并把导师文献、
-                        领域文献和合法公开 PDF 一起留在本地供你核验。
-                      </p>
-                    </div>
-                    {confirmedMaterialsMatchDraft && (
-                      <span className="phase-complete-chip">✓ 配置已确认</span>
-                    )}
-                  </div>
-
-                  <label className="materials-field">
-                    <span>1. 精确导师—项目组合</span>
-                    <select
-                      value={materialAdvisorId}
-                      onChange={(event) => {
-                        setMaterialAdvisorId(event.target.value);
-                        setMaterialsConfirmOpen(false);
-                      }}
-                    >
-                      <option value="">请选择，不会自动使用排名第一</option>
-                      {rankings.map((item) => (
-                        <option key={item.advisorProgramId} value={item.advisorProgramId}>
-                          #{item.rank} {item.name} · {item.program || item.school} · {item.advisorProgramId}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <div className="materials-field">
-                    <span>2. 要生成的材料</span>
-                    <div className="materials-options">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={selectedMaterials.has("research_proposal")}
-                          onChange={() => toggleMaterial("research_proposal")}
-                        />
-                        <strong>Research Proposal</strong>
-                        <small>研究问题、文献综述、方法、可行性与审计</small>
-                      </label>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={selectedMaterials.has("outreach_email")}
-                          onChange={() => toggleMaterial("outreach_email")}
-                        />
-                        <strong>陶瓷信</strong>
-                        <small>邮件草稿、联系规则、证据桥与引用审计</small>
-                      </label>
-                    </div>
-                  </div>
-
-                  {selectedMaterials.size > 1 && (
-                    <label className="materials-field">
-                      <span>3. 生成顺序</span>
-                      <select
-                        value={materialOrder}
-                        onChange={(event) => {
-                          setMaterialOrder(
-                            event.target.value as
-                              | "research_proposal_first"
-                              | "outreach_email_first",
-                          );
-                          setMaterialsConfirmOpen(false);
-                        }}
-                      >
-                        <option value="research_proposal_first">先 RP，再决定陶瓷信是否提及/附上</option>
-                        <option value="outreach_email_first">先做简短联系，再发展 RP</option>
-                      </select>
-                    </label>
-                  )}
-
-                  <div className="literature-guardrail">
-                    <strong>固定文献核验条件</strong>
-                    <p>
-                      两类文献都必须列出：① 导师本人/团队；② 导师领域。
-                      前者必须核验导师署名或公开团队关系，后者不得含目标导师署名。
-                      实际引用只允许合法公开版本，并保存本地 PDF、canonical URL、获取依据、
-                      读取层级、用途、SHA-256 与文件大小；不得绕过付费墙。
-                    </p>
-                  </div>
-
-                  <div className="materials-actions">
-                    <button
-                      className="secondary-button"
-                      disabled={materialsSaving || !materialAdvisorId || !selectedMaterials.size}
-                      onClick={reviewApplicationMaterials}
-                    >
-                      {materialsSaving ? "正在保存…" : "查看最终确认摘要"}
-                    </button>
-                  </div>
-
-                  {materialsConfirmOpen && (
-                    <div className="materials-confirmation" role="status">
-                      <strong>请最终确认（确认前不会搜索、下载或写作）</strong>
-                      <ul>
-                        <li>
-                          目标：{selectedMaterialAdvisor?.name || "待核实"} · {selectedMaterialAdvisor?.program || selectedMaterialAdvisor?.school} · <code>{materialAdvisorId}</code>
-                        </li>
-                        <li>材料：{materialOrderList.join(" → ")}</li>
-                        <li>文献：导师署名/团队关系可核验 + 独立领域；仅合法公开 PDF；全部本地留档和校验</li>
-                        <li>边界：不会发送邮件、不会提交 RP、不会自动切换目标</li>
-                      </ul>
-                      <div className="materials-actions">
-                        <button onClick={() => setMaterialsConfirmOpen(false)}>返回修改</button>
-                        <button
-                          className="primary-button"
-                          disabled={materialsSaving}
-                          onClick={confirmApplicationMaterials}
-                        >
-                          {materialsSaving ? "正在确认…" : "确认此配置"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {confirmedMaterialsMatchDraft && confirmedMaterials && (
-                    <div className="materials-run-area">
-                      <div>
-                        <strong>已绑定确认版本 {confirmedMaterials.revision}</strong>
-                        <code>{confirmedMaterials.fingerprint.slice(0, 16)}…</code>
-                      </div>
-                      {confirmedMaterials.order.map((material) => {
-                        const artifact = activeProject?.materialArtifacts?.[material];
-                        const ready = modeReadiness(material);
-                        return (
-                          <div className="material-run-row" key={material}>
-                            <div>
-                              <strong>
-                                {material === "research_proposal" ? "Research Proposal" : "陶瓷信"}
-                              </strong>
-                              <small>
-                                {artifact?.complete
-                                  ? "产物与本地文献包已通过校验"
-                                  : ready.ready
-                                    ? "可以开始"
-                                    : ready.missing.join("；")}
-                              </small>
-                              {artifact?.literature?.length ? (
-                                <ul className="material-literature-list">
-                                  {artifact.literature.map((source) => (
-                                    <li key={`${material}-${source.literatureId}`}>
-                                      <span className={`literature-kind ${source.category}`}>
-                                        {source.category === "advisor_work" ? "导师/团队" : "独立领域"}
-                                      </span>
-                                      <a href={source.canonicalUrl} target="_blank" rel="noreferrer">
-                                        {source.literatureId} · {source.title}
-                                      </a>
-                                      <small>
-                                        {source.authors.join(", ")}{source.year ? ` (${source.year})` : ""}
-                                      </small>
-                                      <code>{source.localPath}</code>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : null}
-                            </div>
-                            <button
-                              className={artifact?.complete ? "secondary-button" : "primary-button"}
-                              disabled={!ready.ready}
-                              onClick={() => startApplicationMaterial(material)}
-                            >
-                              {artifact?.complete ? "重新生成" : "开始生成"}
-                            </button>
-                          </div>
-                        );
-                      })}
-                      <code>
-                        {activeProject?.path}/outputs/application-materials/{confirmedMaterials.advisorProgramId}
-                      </code>
-                    </div>
-                  )}
-                </article>
               </>
             ) : (
               <article className="panel honest-empty">
@@ -3416,6 +3303,268 @@ ${mode === "research_proposal"
                   {projectStatus.candidateCount === 0 ? "前往候选导师" : "查看背调证据"}
                 </button>
               </article>
+            )}
+          </section>
+
+          <section className="result-view materials-view" hidden={view !== "materials"}>
+            <header className="view-header materials-view-header">
+              <div>
+                <span className="section-kicker">APPLICATION MATERIALS</span>
+                <h1>陶瓷信与 Research Proposal</h1>
+                <p>
+                  两项材料共享同一个已确认导师—项目目标，但分别生成、分别校验；完成一项后，
+                  可以随时回来继续另一项。
+                </p>
+              </div>
+              <span className={`materials-progress-chip ${completedMaterialCount === 2 ? "complete" : ""}`}>
+                {completedMaterialCount}/2 已完成
+              </span>
+            </header>
+
+            {materialWorkflowBlock ? (
+              <article className="panel materials-gate">
+                <span className="materials-gate-icon">↳</span>
+                <div>
+                  <span className="section-kicker">完成前置工作</span>
+                  <h2>{materialWorkflowBlock.title}</h2>
+                  <p>{materialWorkflowBlock.description}</p>
+                </div>
+                <button
+                  className="primary-button"
+                  onClick={() => openProjectView(materialWorkflowBlock.view)}
+                >
+                  {materialWorkflowBlock.action}
+                </button>
+              </article>
+            ) : (
+              <>
+                <article className="panel material-target-panel">
+                  <div className="material-target-copy">
+                    <span className="target-step">01</span>
+                    <div>
+                      <span className="section-kicker">精确申请目标</span>
+                      <h2>先指定一位导师和对应项目</h2>
+                      <p>不会默认使用排名第一，也不会把同名导师的其他项目视为同一个目标。</p>
+                    </div>
+                  </div>
+                  <label className="materials-field">
+                    <span>导师—项目组合</span>
+                    <select
+                      value={materialAdvisorId}
+                      onChange={(event) => {
+                        setMaterialAdvisorId(event.target.value);
+                        setMaterialsConfirmOpen(false);
+                      }}
+                    >
+                      <option value="">请选择精确目标</option>
+                      {rankings.map((item) => (
+                        <option key={item.advisorProgramId} value={item.advisorProgramId}>
+                          #{item.rank} {item.name} · {item.program || item.school} · {item.advisorProgramId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedMaterialAdvisor ? (
+                    <div className="selected-material-target">
+                      <span>当前目标</span>
+                      <strong>{selectedMaterialAdvisor.name}</strong>
+                      <small>
+                        {[selectedMaterialAdvisor.school, selectedMaterialAdvisor.program]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </small>
+                      <code>{selectedMaterialAdvisor.advisorProgramId}</code>
+                    </div>
+                  ) : (
+                    <div className="selected-material-target empty">
+                      <span>等待选择</span>
+                      <strong>还没有绑定目标导师</strong>
+                      <small>选择后，再在下面决定先生成哪一项材料。</small>
+                    </div>
+                  )}
+                </article>
+
+                {!applicantIdentityReady && (
+                  <article className="panel material-identity-warning">
+                    <div>
+                      <strong>生成前还需要补全申请者资料</strong>
+                      <p>
+                        {!activeProject?.applicantName?.trim()
+                          ? "请填写申请者真实姓名。"
+                          : "已记录申请者姓名。"}
+                        {activeProject?.cv?.valid
+                          ? " 当前项目中的原 CV 会被两项材料持续复用。"
+                          : ` ${activeProject?.cv?.issue || "请上传一份可读取的真实 CV。"}`}
+                      </p>
+                    </div>
+                    <button className="secondary-button" onClick={focusApplicationInput}>
+                      补全申请资料
+                    </button>
+                  </article>
+                )}
+
+                <div className="application-material-windows">
+                  {([
+                    {
+                      id: "outreach_email" as const,
+                      index: "02A",
+                      kicker: "ADVISOR OUTREACH",
+                      title: "陶瓷信",
+                      description: "生成简洁、具体、可直接复制的联系邮件，并保留事实桥与引用审计。",
+                      deliverables: ["邮件正文", "联系规则核验", "证据与引用审计"],
+                    },
+                    {
+                      id: "research_proposal" as const,
+                      index: "02B",
+                      kicker: "RESEARCH PROPOSAL",
+                      title: "Research Proposal",
+                      description: "先核对项目格式，再完成文献综述、研究问题、方法与可行性论证。",
+                      deliverables: ["LaTeX 与 BibTeX", "可提交版 PDF", "文献与格式审计"],
+                    },
+                  ]).map((material) => {
+                    const artifact = materialArtifacts?.[material.id];
+                    const ready = modeReadiness(material.id);
+                    const includedInConfirmedSnapshot = Boolean(
+                      confirmedMaterialsMatchDraft &&
+                        confirmedMaterials?.advisorProgramId === materialAdvisorId &&
+                        confirmedMaterials.materials.includes(material.id),
+                    );
+                    const waitingForThisConfirmation = Boolean(
+                      materialsConfirmOpen && selectedMaterials.has(material.id),
+                    );
+                    const status = artifact?.complete
+                      ? "已完成"
+                      : includedInConfirmedSnapshot && ready.ready
+                        ? "可以生成"
+                        : waitingForThisConfirmation
+                          ? "等待确认"
+                          : "尚未生成";
+                    return (
+                      <article
+                        className={`panel application-material-window ${artifact?.complete ? "complete" : ""}`}
+                        key={material.id}
+                      >
+                        <header>
+                          <span className="target-step">{material.index}</span>
+                          <span className={`material-window-status ${artifact?.complete ? "complete" : ""}`}>
+                            {status}
+                          </span>
+                        </header>
+                        <div className="material-window-copy">
+                          <span className="section-kicker">{material.kicker}</span>
+                          <h2>{material.title}</h2>
+                          <p>{material.description}</p>
+                        </div>
+                        <ul className="material-deliverables">
+                          {material.deliverables.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                        <div className="material-window-readiness">
+                          <strong>{artifact?.complete ? "产物已通过本地校验" : "生成条件"}</strong>
+                          <small>
+                            {artifact?.complete
+                              ? "你仍然可以为同一目标重新生成，不影响另一项材料。"
+                              : includedInConfirmedSnapshot
+                                ? ready.ready
+                                  ? "目标和申请者资料已齐全，可以开始。"
+                                  : ready.missing.join("；")
+                                : "选择此项后会先展示精确目标与生成边界，确认前不会开始写作。"}
+                          </small>
+                        </div>
+                        {artifact?.literature?.length ? (
+                          <details className="material-source-details">
+                            <summary>查看已核验的 {artifact.literature.length} 条文献</summary>
+                            <ul className="material-literature-list">
+                              {artifact.literature.map((source) => (
+                                <li key={`${material.id}-${source.literatureId}`}>
+                                  <span className={`literature-kind ${source.category}`}>
+                                    {source.category === "advisor_work" ? "导师/团队" : "独立领域"}
+                                  </span>
+                                  <a href={source.canonicalUrl} target="_blank" rel="noreferrer">
+                                    {source.literatureId} · {source.title}
+                                  </a>
+                                  <small>
+                                    {source.authors.join(", ")}{source.year ? ` (${source.year})` : ""}
+                                  </small>
+                                  <code>{source.localPath}</code>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        ) : null}
+                        <div className="material-window-actions">
+                          {includedInConfirmedSnapshot ? (
+                            <button
+                              className={artifact?.complete ? "secondary-button" : "primary-button"}
+                              disabled={!ready.ready || materialsSaving}
+                              onClick={() => startApplicationMaterial(material.id)}
+                            >
+                              {artifact?.complete ? "为当前目标重新生成" : `开始生成${material.title}`}
+                            </button>
+                          ) : (
+                            <button
+                              className="primary-button"
+                              disabled={
+                                materialsSaving ||
+                                !materialAdvisorId ||
+                                !applicantIdentityReady
+                              }
+                              onClick={() => prepareApplicationMaterial(material.id)}
+                            >
+                              {materialsSaving && selectedMaterials.has(material.id)
+                                ? "正在准备…"
+                                : `选择生成${material.title}`}
+                            </button>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+
+                {materialsConfirmOpen && (
+                  <article className="materials-confirmation material-page-confirmation" role="status">
+                    <div>
+                      <span className="section-kicker">FINAL CONFIRMATION</span>
+                      <strong>请确认本次只生成这一项材料</strong>
+                    </div>
+                    <ul>
+                      <li>
+                        目标：{selectedMaterialAdvisor?.name || "待核实"} · {selectedMaterialAdvisor?.program || selectedMaterialAdvisor?.school} · <code>{materialAdvisorId}</code>
+                      </li>
+                      <li>
+                        本次材料：{materialOrderList[0] === "research_proposal" ? "Research Proposal" : "陶瓷信"}
+                      </li>
+                      <li>两类文献：导师本人/团队 + 独立领域；只保存合法公开 PDF 和完整来源记录</li>
+                      <li>不会发送邮件、不会提交 RP、不会改变另一项已经生成的材料</li>
+                    </ul>
+                    <div className="materials-actions">
+                      <button onClick={() => setMaterialsConfirmOpen(false)}>返回修改</button>
+                      <button
+                        className="primary-button"
+                        disabled={materialsSaving}
+                        onClick={confirmApplicationMaterials}
+                      >
+                        {materialsSaving ? "正在确认…" : "确认目标与本次材料"}
+                      </button>
+                    </div>
+                  </article>
+                )}
+
+                <aside className="materials-policy-note">
+                  <strong>统一生成边界</strong>
+                  <p>
+                    两项材料都复用项目最初上传的真实 CV；只绑定当前明确选择的导师—项目组合。
+                    文献必须区分导师/团队作品与独立领域作品，合法公开版本及校验信息保存在本地。
+                  </p>
+                  {confirmedMaterialsMatchDraft && confirmedMaterials && (
+                    <code>
+                      {activeProject?.path}/outputs/application-materials/{confirmedMaterials.advisorProgramId}
+                    </code>
+                  )}
+                </aside>
+              </>
             )}
           </section>
         </div>
