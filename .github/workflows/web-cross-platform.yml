@@ -21,8 +21,8 @@ jobs:
         working-directory: web
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22.13.1
           cache: npm
@@ -31,3 +31,91 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run test:startup
+
+  windows-fresh-zip-user:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.1
+
+      - name: Create and extract a clean user ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $archive = Join-Path $env:RUNNER_TEMP "advisor-atlas.zip"
+          $installRoot = Join-Path $env:RUNNER_TEMP "新手 下载测试"
+          git archive --format=zip --output=$archive HEAD
+          New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $installRoot
+          "INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Follow the README installation commands
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          node --version
+          npm --version
+          Set-Location (Join-Path $env:INSTALL_ROOT "web")
+          npm install
+
+      - name: Run npm run dev and verify both services
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $webRoot = Join-Path $env:INSTALL_ROOT "web"
+          $stdout = Join-Path $env:RUNNER_TEMP "advisor-dev.stdout.log"
+          $stderr = Join-Path $env:RUNNER_TEMP "advisor-dev.stderr.log"
+          $npm = (Get-Command npm.cmd).Source
+          $startOptions = @{
+            FilePath = $npm
+            ArgumentList = @("run", "dev")
+            WorkingDirectory = $webRoot
+            RedirectStandardOutput = $stdout
+            RedirectStandardError = $stderr
+            PassThru = $true
+          }
+          $process = Start-Process @startOptions
+
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 120; $attempt++) {
+              if ($process.HasExited) {
+                throw "npm run dev exited early with code $($process.ExitCode)"
+              }
+              try {
+                $runtime = Invoke-WebRequest `
+                  -Uri "http://127.0.0.1:4318/api/health" `
+                  -UseBasicParsing -TimeoutSec 5
+                $ui = Invoke-WebRequest `
+                  -Uri "http://localhost:3000/" `
+                  -UseBasicParsing -TimeoutSec 5
+                if ($runtime.StatusCode -eq 200 -and $ui.StatusCode -eq 200) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                Start-Sleep -Seconds 1
+              }
+            }
+
+            if (-not $ready) {
+              throw "The UI and local runtime did not become ready"
+            }
+            Write-Host "Fresh Windows ZIP install and npm run dev passed."
+          } catch {
+            Write-Host "--- npm run dev stdout ---"
+            if (Test-Path $stdout) { Get-Content $stdout }
+            Write-Host "--- npm run dev stderr ---"
+            if (Test-Path $stderr) { Get-Content $stderr }
+            throw
+          } finally {
+            if (-not $process.HasExited) {
+              taskkill /PID $($process.Id) /T /F | Out-Null
+            }
+          }
