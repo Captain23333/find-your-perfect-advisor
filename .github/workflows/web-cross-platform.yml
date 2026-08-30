@@ -1,0 +1,84 @@
+name: Web cross-platform
+
+on:
+  pull_request:
+  push:
+    branches: [main, "codex/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-web:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.1
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:startup
+
+  windows-fresh-zip-user:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13.1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Create and extract a clean user ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $archive = Join-Path $env:RUNNER_TEMP "advisor-atlas.zip"
+          $installRoot = Join-Path $env:RUNNER_TEMP "新手 下载测试"
+          git archive --format=zip --output=$archive HEAD
+          New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $installRoot
+          "INSTALL_ROOT=$installRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Follow the README installation commands
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          node --version
+          npm --version
+          Set-Location (Join-Path $env:INSTALL_ROOT "web")
+          npm install
+
+      - name: Run npm run dev and verify Windows Ctrl+C shutdown
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          Set-Location (Join-Path $env:INSTALL_ROOT "web")
+          python scripts/windows-user-lifecycle.py dev
+
+      - name: Build, run npm start, and verify Windows Ctrl+C shutdown
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          Set-Location (Join-Path $env:INSTALL_ROOT "web")
+          npm run build
+          python scripts/windows-user-lifecycle.py start
