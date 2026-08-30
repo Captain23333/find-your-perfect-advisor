@@ -102,14 +102,14 @@ test("Web saves draft first and refreshes community sources only after confirmat
     readFile(resolve(repositoryRoot, "web/local-runtime/server.mjs"), "utf8"),
   ]);
   const saveFunction = pageSource.match(
-    /async function saveInvestigationConfiguration\([\s\S]*?\n  }\n\n  async function refreshCommunityKnowledge/,
+    /async function saveInvestigationConfiguration\([\s\S]*?\r?\n  }\r?\n\r?\n  async function refreshCommunityKnowledge/,
   )?.[0];
   assert.ok(saveFunction, "draft save function is missing");
   assert.match(saveFunction, /investigation:\s*\{\s*draft:/);
   assert.doesNotMatch(saveFunction, /confirmed:/);
 
   const confirmFunction = pageSource.match(
-    /async function confirmAndStartInvestigation\(\)[\s\S]*?\n  }\n\n  function startRanking/,
+    /async function confirmAndStartInvestigation\(\)[\s\S]*?\r?\n  }\r?\n\r?\n  function startRanking/,
   )?.[0];
   assert.ok(confirmFunction, "final confirmation function is missing");
   const confirmPosition = confirmFunction.indexOf("/investigation/confirm");
