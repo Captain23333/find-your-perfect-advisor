@@ -1,22 +1,25 @@
 import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createVinextLaunch } from "./vinext.mjs";
 
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const children = [];
 
-function launch(command, args) {
+function launch(name, command, args, options = {}) {
   const child = spawn(command, args, {
     cwd: webRoot,
     env: process.env,
     stdio: "inherit",
+    ...options,
   });
   children.push(child);
+  child.on("error", (error) => {
+    console.error(`Failed to start ${name}: ${error.message}`);
+    if (!shuttingDown) shutdown(1);
+  });
   return child;
 }
-
-const runtime = launch(process.execPath, ["local-runtime/server.mjs"]);
-const ui = launch("npm", ["run", "dev:ui"]);
 
 let shuttingDown = false;
 function shutdown(code = 0) {
@@ -27,6 +30,19 @@ function shutdown(code = 0) {
   }
   setTimeout(() => process.exit(code), 1200).unref();
 }
+
+const runtime = launch("local runtime", process.execPath, [
+  "local-runtime/server.mjs",
+]);
+const uiLaunch = createVinextLaunch(["dev", ...process.argv.slice(2)], {
+  webRoot,
+});
+const ui = launch(
+  "web UI",
+  uiLaunch.command,
+  uiLaunch.args,
+  uiLaunch.options,
+);
 
 runtime.on("exit", (code) => {
   if (!shuttingDown) shutdown(code ?? 1);

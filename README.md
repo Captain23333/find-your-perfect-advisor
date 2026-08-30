@@ -89,6 +89,12 @@ npm run dev
 
 运行环境要求 Node.js 22.13 或更高版本。
 
+以上三条命令可直接用于 macOS、Linux、Windows PowerShell 和 Windows
+命令提示符；请逐行执行，不要把它们合并成一条命令。项目通过 Node 直接启动本地
+`vinext` CLI，不依赖 Bash 环境变量语法，也不要求 Windows 单独调用
+`npm.cmd`。如果 `node --version` 或 `npm --version` 无法正常输出，请先安装或
+升级 Node.js，随后关闭并重新打开终端。
+
 ### 3. 在网页中开始
 
 1. 点击“新建申请项目”，填写项目名称。

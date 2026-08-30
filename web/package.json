@@ -7,12 +7,13 @@
   },
   "scripts": {
     "dev": "node scripts/dev-local.mjs",
-    "dev:ui": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
+    "dev:ui": "node scripts/vinext.mjs dev",
     "runtime": "node local-runtime/server.mjs",
     "backend": "node local-runtime/cli.mjs",
-    "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
-    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
+    "build": "node scripts/vinext.mjs build",
+    "start": "node scripts/vinext.mjs start",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "test:startup": "node scripts/smoke-dev.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

@@ -31,6 +31,10 @@ npm run dev
 - Web 控制台：`http://localhost:3000/`
 - 仅绑定本机的 Agent 桥接服务：`http://127.0.0.1:4318/`
 
+这些命令同时支持 macOS、Linux、Windows PowerShell 和 Windows 命令提示符，
+无需修改环境变量写法。请逐行执行，并确保 `node --version` 为 22.13.0 或更高
+版本。
+
 本地桥接服务会调用已登录的 Claude/Codex CLI。Custom API 也需要 Codex
 app-server 作为本地 Agent 运行引擎；该运行引擎已作为 `web` 的 npm 依赖随
 `npm install` 安装，使用 Custom API 时不要求登录 Codex。
