@@ -320,6 +320,14 @@ test("structured input requests are recognised inside ordinary agent messages", 
   assert.equal(direct.fields.length, 1);
   assert.equal(direct.fields[0].id, "degree");
 
+  const cv = parseInputRequest({
+    type: "input.requested",
+    reason: "需要真实 CV",
+    fields: [{ id: "cv", label: "上传真实 CV", required: true }],
+  });
+  assert.equal(cv.fields.length, 1);
+  assert.equal(cv.fields[0].id, "cv");
+
   const embedded = extractInputRequest(
     '好的，我需要更多信息：\n{"type":"input.requested","reason":"缺少申请季","fields":[{"id":"season","label":"申请季"}]}\n谢谢。',
   );

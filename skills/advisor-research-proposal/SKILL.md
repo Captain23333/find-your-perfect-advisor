@@ -1,13 +1,11 @@
 ---
 name: advisor-research-proposal
 description: >
-  Plan, research, draft, adapt, or audit a Research Proposal (RP) for a specific
-  academic advisor and application program after Advisor Finder, Detective, or
-  Evaluator. Use when the user needs a proposal, concept note, literature review,
-  research-gap argument, methods plan, or proposal revision. Follow the official
-  format, build a traceable mini-review, map questions to feasible methods and
-  resources, verify citations, and separate evidence from hypotheses. Do not use
-  for a full systematic review unless the user or program explicitly requires one.
+  Plan, research, draft, adapt, or audit a Research Proposal or concept note for
+  one exact advisor-program target. Follow official requirements, ground gaps
+  and citations in inspected literature, align questions with feasible methods,
+  and separate evidence from hypotheses. Excludes a full systematic review
+  unless explicitly required.
 ---
 
 # Advisor Research Proposal
@@ -17,16 +15,17 @@ relevant scholarly conversation, a defensible opening, and a feasible plan. A
 proposal is not a prediction that all methods, results, or contributions will
 survive unchanged during the degree.
 
-Always read:
+Load only what the current mode needs:
 
-- [references/literature-review.md](references/literature-review.md) before
-  searching, synthesizing, or claiming a gap.
-- [references/proposal-gates.md](references/proposal-gates.md) before drafting
-  methods, feasibility, contribution, or the final document.
-- [references/latex-delivery.md](references/latex-delivery.md) before creating,
-  compiling, or visually checking the applicant-facing deliverable.
-- [../advisor-pipeline/references/application-materials-contract.md](../advisor-pipeline/references/application-materials-contract.md)
-  when used inside Advisor Atlas, before literature search or drafting.
+- Read [references/literature-review.md](references/literature-review.md) before
+  searching, synthesizing, or making/reviewing a gap claim.
+- Read [references/proposal-gates.md](references/proposal-gates.md) before a
+  final-form draft or final audit. A narrow early question-refinement turn does
+  not need all six gates yet.
+- Read [references/latex-delivery.md](references/latex-delivery.md) only before
+  creating, compiling, or visually checking applicant-facing files.
+- Read [../advisor-pipeline/references/application-materials-contract.md](../advisor-pipeline/references/application-materials-contract.md)
+  inside Advisor Atlas before literature download or artifact generation.
 
 ## Required target and requirement gate
 

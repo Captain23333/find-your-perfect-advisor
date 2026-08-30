@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   LITERATURE_ACCESS_BASES,
   LITERATURE_CATEGORIES,
   literatureRelationshipErrors,
 } from "./application-materials-artifacts.mjs";
 import { isSafeAdvisorProgramId } from "./project-contract.mjs";
+import { isExecutedDirectly } from "./direct-execution.mjs";
 
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
@@ -71,6 +71,32 @@ async function readExistingManifest(path) {
   }
 }
 
+async function reusablePdf(existing, absolutePath, expected) {
+  if (
+    !existing ||
+    existing.accessStatus !== "downloaded_open_access" ||
+    existing.localPath !== expected.localPath ||
+    existing.canonicalUrl !== expected.canonicalUrl ||
+    existing.downloadUrl !== expected.downloadUrl ||
+    existing.accessBasis !== expected.accessBasis ||
+    !existing.sha256 ||
+    !Number.isFinite(Number(existing.bytes))
+  ) {
+    return null;
+  }
+  try {
+    const bytes = await readFile(absolutePath);
+    if (!bytes.subarray(0, 5).equals(Buffer.from("%PDF-"))) return null;
+    if (bytes.length !== Number(existing.bytes)) return null;
+    if (createHash("sha256").update(bytes).digest("hex") !== existing.sha256) {
+      return null;
+    }
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
 export async function downloadPdf(url, fetchImpl = fetch) {
   let current = safeUrl(url, "downloadUrl");
   let response;
@@ -116,6 +142,8 @@ export async function fetchOpenLiterature({
   confirmedRevision,
   confirmedFingerprint,
   now = new Date().toISOString(),
+  refresh = false,
+  fetchImpl = fetch,
 }) {
   const projectRoot = resolve(root);
   const safeAdvisorId = String(advisorProgramId || "").trim();
@@ -146,6 +174,8 @@ export async function fetchOpenLiterature({
   await mkdir(literatureRoot, { recursive: true });
   const existing = await readExistingManifest(manifestPath);
   const byId = new Map(existing.map((source) => [source.literatureId, source]));
+  let downloadedCount = 0;
+  let reusedCount = 0;
 
   for (const raw of rawSources) {
     const literatureId = cleanId(raw?.literatureId);
@@ -181,10 +211,24 @@ export async function fetchOpenLiterature({
     const relativePath = `literature/${categoryDirectory}/${literatureId}.pdf`;
     const absolutePath = resolve(targetRoot, relativePath);
     await mkdir(resolve(targetRoot, "literature", categoryDirectory), { recursive: true });
-    const bytes = await downloadPdf(downloadUrl);
-    const temporary = `${absolutePath}.tmp-${process.pid}`;
-    await writeFile(temporary, bytes);
-    await rename(temporary, absolutePath);
+    const previous = byId.get(literatureId);
+    const reusedBytes = refresh
+      ? null
+      : await reusablePdf(previous, absolutePath, {
+          localPath: relativePath,
+          canonicalUrl: canonicalUrl.href,
+          downloadUrl: downloadUrl.href,
+          accessBasis: raw.accessBasis,
+        });
+    const bytes = reusedBytes || (await downloadPdf(downloadUrl, fetchImpl));
+    if (reusedBytes) {
+      reusedCount += 1;
+    } else {
+      downloadedCount += 1;
+      const temporary = `${absolutePath}.tmp-${process.pid}`;
+      await writeFile(temporary, bytes);
+      await rename(temporary, absolutePath);
+    }
     byId.set(literatureId, {
       literatureId,
       category: raw.category,
@@ -226,7 +270,8 @@ export async function fetchOpenLiterature({
           ? String(raw.independenceNote || "").trim()
           : undefined,
       usedIn,
-      verifiedAt: now,
+      verifiedAt: reusedBytes ? previous.verifiedAt || now : now,
+      ...(reusedBytes ? { reusedAt: now } : {}),
     });
   }
 
@@ -250,7 +295,7 @@ export async function fetchOpenLiterature({
   const temporaryManifest = `${manifestPath}.tmp-${process.pid}`;
   await writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`);
   await rename(temporaryManifest, manifestPath);
-  return { manifestPath, manifest };
+  return { manifestPath, manifest, downloadedCount, reusedCount };
 }
 
 async function main() {
@@ -260,6 +305,7 @@ async function main() {
   const sourceFile = option(args, "--source-file");
   const revision = Number(option(args, "--confirmed-revision"));
   const fingerprint = option(args, "--confirmed-fingerprint");
+  const refresh = args.includes("--refresh");
   if (!advisorProgramId || !sourceFile || !Number.isInteger(revision) || !fingerprint) {
     throw new Error(
       "需要 --advisor-id、--source-file、--confirmed-revision 和 --confirmed-fingerprint",
@@ -271,11 +317,12 @@ async function main() {
     sourceFile,
     confirmedRevision: revision,
     confirmedFingerprint: fingerprint,
+    refresh,
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isExecutedDirectly(import.meta.url)) {
   main().catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

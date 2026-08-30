@@ -43,6 +43,7 @@ import {
   parseInputRequest,
   verifyRunArtifacts,
 } from "./run-artifacts.mjs";
+import { buildRunPrompt } from "./run-prompt.mjs";
 
 const runtimeDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = process.env.ADVISOR_ATLAS_PROJECT_ROOT
@@ -779,51 +780,14 @@ async function startRun(request, response, origin) {
   await mkdir(runDirectory, { recursive: true });
   await projectStore.syncProjectSkills(projectId);
 
-  const skillPath =
-    provider === "claude"
-      ? resolve(project.path, ".claude/skills/advisor-pipeline/SKILL.md")
-      : resolve(project.path, ".agents/skills/advisor-pipeline/SKILL.md");
-  const effectivePrompt = `${prompt}
-
-本地控制台运行约束：
-1. 当前唯一申请项目目录为：${project.path}
-2. 导师匹配总技能入口为：${skillPath}
-3. 本次运行的专属输出目录为：${runDirectory}
-4. 共享状态文件写入申请项目目录，最终表格和报告写入 ${resolve(project.path, "outputs")}，本次临时记录写入运行目录。
-5. 不得编造 CV、导师、招生状态或申请者经历。Phase 1 的启动条件是目标范围和一份可读取的真实 CV；研究兴趣是可选补充。目标学位和申请季最迟必须在客观申请条件筛选前补齐。RP 与套磁信还必须具有已确认的申请者真实姓名；缺少时暂停并请求输入，不得生成占位符成品。
-6. 每完成一个阶段，都要把真实进度同步到 ${resolve(project.path, "status.json")}。保留 JSON 格式，并使用：
-   {"schemaVersion":2,"phase":"intake|finder|detective|evaluator|completed","stage":"intake|discovery|research_fit|objective_screen|selection|investigation|ranking|completed","candidateCount":0,"shortlistCount":0,"objectiveReadyCount":0,"selectedCount":0,"evidenceCount":0,"evidenceCoverage":0,"rankingCount":0,"updatedAt":"ISO-8601 时间"}
-   数字必须来自该项目实际产物；尚未产生的结果保持 0，不能用界面演示数字填充。
-7. Phase 1 产生候选并完成客观筛选后，同步写入 ${resolve(project.path, "outputs", "candidates.json")}。每项至少使用：
-   {"advisorProgramId":"稳定ID","rank":1,"initials":"AB","name":"真实姓名","school":"真实院校","program":"真实项目","fit":0.0,"status":"已核实状态或待核实","statusTone":"open|caution|closed|unknown","feasibility":"eligible|ineligible|needs_confirmation","feasibilityReasons":[],"directions":["方向"],"evidence":0}
-   每项必须可追溯到真实检索结果；不确定字段要标为待核实，不能补写演示人物。
-8. 本次项目最终确认的调查配置为：${JSON.stringify(project.investigation?.confirmed || null, null, 2)}
-   必须使用其中精确的 selectedAdvisorProgramIds 和 selectedSections，不能只按人数或 Top N 猜测。
-   写 outputs/detective-results.json 时，顶层必须带上 "confirmedRevision": ${
-     project.investigation?.confirmed?.revision ?? "null"
-   } 和 "confirmedFingerprint": ${JSON.stringify(
-     project.investigation?.confirmed?.fingerprint || null,
-   )}，以及 "generatedAt"。每个已选维度都必须给出结论，或显式写成 {"status":"not_completed","summary":"原因"}；不能留空。
-9. Web 社区资料缓存目录为：${resolve(project.path, "community-cache")}。只有 communitySources.consented 为 true 且相关维度被选中时才可读取；searchReady 不为 true 时必须写“未完成检索”。
-10. Phase 1 目标 shortlist 数量为 ${project.shortlistTarget}。发现池大小必须服从用户范围：如果是一个明确学校、院系、研究所或实验室，覆盖其官方名册中合理相关且具备指导资格的人，不得为了凑数硬扩到 30，通常以约 ${Math.min(
-    60,
-    project.shortlistTarget * 2,
-  )} 位相关候选为目标；只有跨校或地区级宽范围搜索才以约 ${Math.min(
-    60,
-    project.shortlistTarget * 3,
-  )} 位为目标。再按研究匹配与客观条件筛到目标数量；不得把 Phase 2 的社区风评、组内生态或全面社交调查提前到 Phase 1。
-11. 不要执行 git commit、git push、发布、发送邮件或任何对外提交操作。
-12. 如果缺少继续所需的申请资料（例如目标学位或申请季），不要在对话里提问后空转，也不要自行假设。请单独输出一行 JSON：
-   {"type":"input.requested","reason":"简短说明","fields":[{"id":"degree","label":"目标学位","required":true}]}
-   允许的 field id 只有 degree、season、target、interests、shortlistTarget。输出后结束本轮，控制台会收集答案并让你继续。
-13. 本项目最终确认的申请材料配置为：${JSON.stringify(
-    project.applicationMaterials?.confirmed || null,
-    null,
-    2,
-  )}
-   只有 research_proposal / outreach_email 运行可以使用它，而且必须绑定精确 advisorProgramId、revision 与 fingerprint。不得自动改成排名第一、同名导师的另一项目或批量生成。
-14. 申请材料引用必须分成 advisor_work（导师本人/团队）与 field_work（领域文献）。来源 JSON 顶层必须写与当前排名一致的 targetAdvisorName。advisor_work 必须记录 advisorRelationship：导师本人作者须与论文作者列表匹配；团队作者须列 matchedAuthors 和公开关系证据 URL。field_work 必须写 independenceNote，且不能含目标导师署名。所有实际引用必须写入目标目录 literature/manifest.json，并通过 skills/advisor-pipeline/scripts/fetch_open_literature.mjs 从合法公开来源下载为本地 PDF；记录 canonicalUrl、downloadUrl、accessBasis、license、inspectionLevel、usedIn、SHA-256 与文件大小。禁止绕过付费墙；没有合法公开全文时换用可核验的公开版本，或明确不引用该来源。
-15. 研究计划书必须先核验目标项目实际要求的文档类型、模板、篇幅和引用格式。若要求 RP，或用户明确需要讨论用 concept note，则写入 research-proposal.tex、references.bib、proposal-evidence.md、proposal-review.md，运行 skills/advisor-pipeline/scripts/build_research_proposal.mjs 生成 research-proposal.pdf 与 proposal-build.json，并逐页渲染检查。陶瓷信写入干净可复制的 outreach-email.txt 与内部核验文件 outreach-audit.md。申请者可见的 .tex、PDF 和邮件正文不得含 TEST、DRAFT、DO NOT SUBMIT/SEND 等内部标记；所有待核实项只写入审计和最终交付说明。proposal-evidence.md / outreach-audit.md 必须逐项列出本次引用的 literatureId。不得发送邮件或提交研究计划书。`;
+  const effectivePrompt = buildRunPrompt({
+    userPrompt: prompt,
+    project,
+    runDirectory,
+    provider,
+    mode,
+    confirmedMaterialRanking,
+  });
 
   const command =
     provider === "codex"

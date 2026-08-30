@@ -11,13 +11,13 @@
 // cache, no network — those belong after the user confirms.
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   DEFAULT_DETECTIVE_SECTIONS,
   DETECTIVE_SECTION_CATALOG,
   investigationCostLevel,
   normalizeInvestigation,
 } from "./project-contract.mjs";
+import { isExecutedDirectly } from "./direct-execution.mjs";
 
 function candidateRow(candidate, index) {
   return {
@@ -136,7 +136,7 @@ export function renderInvestigationMenu(menu) {
   );
   lines.push("");
   lines.push(
-    "确认前只读取 project.json、candidates.json 和上面的维度目录，不读取 advisor records、evidence bundles、社区缓存或历史结果，也不发起任何网络请求。",
+    "此选择菜单只读取 project.json、candidates.json 和上面的维度目录，不读取 advisor records、evidence bundles、社区缓存或历史结果，也不发起任何网络请求。确认后才按已选对象与维度开始背调。",
   );
   return `${lines.join("\n")}\n`;
 }
@@ -154,7 +154,7 @@ async function main() {
   );
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isExecutedDirectly(import.meta.url)) {
   main().catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

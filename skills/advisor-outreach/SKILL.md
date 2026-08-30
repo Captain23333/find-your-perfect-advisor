@@ -1,13 +1,10 @@
 ---
 name: advisor-outreach
 description: >
-  Draft or audit a personalized, evidence-grounded email to a prospective
-  academic advisor after Advisor Finder, Detective, or Evaluator. Use for a
-  first supervision inquiry, advertised-position response, polite follow-up,
-  or reply to an advisor. Verify the exact advisor-program target and contact
-  instructions, connect real applicant evidence to specific advisor work, and
-  produce a human-sounding draft plus a claim and attachment audit. Never send
-  the email.
+  Draft or audit a personalized, evidence-grounded email for one exact academic
+  advisor-program target: first inquiry, advertised-position response,
+  follow-up, or reply. Verify contact rules, connect CV evidence to specific
+  advisor work, and produce a clean draft plus audit. Never send the email.
 ---
 
 # Advisor Outreach

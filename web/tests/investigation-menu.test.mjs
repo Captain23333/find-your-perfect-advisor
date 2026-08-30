@@ -113,7 +113,8 @@ test("the menu renders from project.json and candidates.json alone", async () =>
     assert.equal(menu.cost.workUnits, 11);
     assert.equal(menu.cost.level, "medium");
     const rendered = renderInvestigationMenu(menu);
-    assert.match(rendered, /确认前只读取 project\.json、candidates\.json/);
+    assert.match(rendered, /此选择菜单只读取 project\.json、candidates\.json/);
+    assert.match(rendered, /确认后才按已选对象与维度开始背调/);
     assert.match(rendered, /社区资料本地下载：已请求/);
   } finally {
     await rm(root, { recursive: true, force: true });

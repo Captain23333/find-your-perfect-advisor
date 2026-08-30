@@ -1,6 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildApplicationMaterialTaskPrompt,
+  buildInvestigationTaskPrompt,
+  buildPhaseOneTaskPrompt,
+  buildRankingTaskPrompt,
+  defaultTask,
+} from "./run-task-prompts.mjs";
+import { appendVisibleRunEvent } from "./run-event-state.mjs";
 
 type Provider = "Claude Code" | "Codex" | "Custom API";
 type View = "overview" | "candidates" | "evidence" | "ranking" | "materials";
@@ -312,16 +320,6 @@ type CommunityCacheStatus = {
   error: string | null;
 };
 
-const defaultTask = `请完整读取 skills/advisor-pipeline/SKILL.md，并从 Phase 1 开始导师匹配。
-
-Phase 1 启动前只检查：
-1. 已填写目标学校或目标范围
-2. 已上传可读取的真实 CV
-
-目标学位和申请季可以稍后补充，但进入客观申请条件筛选前必须齐全。
-研究兴趣和权重是可选补充；没有权重时按等权处理。
-严格按照 skill 执行，并保留每条关键结论的来源。`;
-
 const runModeArtifactLabels: Record<RunnerMode, string> = {
   finder: "Phase 1 候选导师",
   detective: "Phase 2 背调结果",
@@ -335,6 +333,7 @@ function runModeArtifactLabel(mode: RunnerMode) {
 }
 
 const runInputFieldLabels: Record<string, string> = {
+  cv: "上传可读取的真实 CV",
   degree: "目标学位",
   degreeLevel: "目标学位",
   season: "申请季",
@@ -1134,23 +1133,7 @@ export default function Home() {
   }
 
   function buildPhaseOnePrompt() {
-    const project = activeProject;
-    const interests = project?.interests?.length
-      ? project.interests
-          .map((interest) => `${interest.name} ${interest.weight}%`)
-          .join("，")
-      : "未提供；请以 CV 为主要匹配信号";
-
-    return `${defaultTask}
-
-当前已保存的 Phase 1 输入：
-- CV：${project?.cv?.path || filePath || "未上传"}
-- 申请目标：${project?.target || "未填写"}
-- 目标学位与申请季：${project?.degree || "未填写"} · ${project?.season || "未填写"}
-- 研究兴趣权重：${interests}
-- shortlist：Top ${project?.shortlistTarget || 10}
-
-仅调查目标范围内的导师。Phase 1 不检索社区风评或其他 Phase 2 信息；优先复用同一官方页面中的项目与申请条件，避免重复搜索。`;
+    return buildPhaseOneTaskPrompt({ project: activeProject, filePath });
   }
 
   function firstUsableProvider(): Provider | null {
@@ -1299,6 +1282,9 @@ export default function Home() {
       if (!response.ok) throw new Error(payload.error || "上传失败");
       setFilePath(payload.path);
       setUploadState("ready");
+      if (requestedInput?.fields.some((field) => field.id === "cv")) {
+        setInputAnswers((current) => ({ ...current, cv: payload.path }));
+      }
       await refreshProjects(activeProjectId);
       showNotice("CV 已保存到当前申请项目");
     } catch (error) {
@@ -1374,23 +1360,7 @@ export default function Home() {
           setTechnicalEvents((current) => [...current.slice(-199), event]);
         }
         if (event.message && event.level !== "diagnostic") {
-          setRunEvents((current) => {
-            const previous = current[current.length - 1];
-            if (
-              event.type === "item/agentMessage/delta" &&
-              previous?.type === event.type &&
-              previous.source === event.source
-            ) {
-              return [
-                ...current.slice(0, -1),
-                {
-                  ...previous,
-                  message: `${previous.message || ""}${event.message || ""}`,
-                },
-              ];
-            }
-            return [...current.slice(-399), event];
-          });
+          setRunEvents((current) => appendVisibleRunEvent(current, event));
         }
         if (event.type === "run.finished") {
           setPendingPermissions([]);
@@ -1609,14 +1579,16 @@ export default function Home() {
             .map((name) => ({ name, weight: 0 }));
         }
       }
-      const response = await fetch(`${runtimeUrl}/api/projects/${activeProjectId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "补充资料保存失败");
-      await refreshProjects(activeProjectId);
+      if (Object.keys(patch).length > 0) {
+        const response = await fetch(`${runtimeUrl}/api/projects/${activeProjectId}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "补充资料保存失败");
+        await refreshProjects(activeProjectId);
+      }
       const currentRunId = runIdRef.current || runId;
       if (!currentRunId) throw new Error("原 Agent 会话已丢失，无法继续");
       const continuation = await fetch(
@@ -1811,16 +1783,7 @@ export default function Home() {
         await refreshCommunityKnowledge(confirmedProject);
       }
       setInvestigationConfirmOpen(false);
-      openRunner(`请完整读取 skills/advisor-detective/SKILL.md，准备开始 Phase 2 按选择维度背调。
-
-只允许从本地已有的 ADVISOR_STATE.md 或最新 Phase 1 输出中读取真实导师名单。
-如果没有真实的 Phase 1 状态文件，请明确说明并停止；绝对不要使用界面中的演示导师姓名。
-精确 advisor-program IDs：${JSON.stringify(confirmed.selectedAdvisorProgramIds)}
-精确 selected_sections：${JSON.stringify(confirmed.selectedSections)}
-确认版本：${confirmed.revision}；配置指纹：${confirmed.fingerprint}
-社区资料本地下载授权：${confirmed.communitySources.consented ? "已授权" : "未授权"}。
-不得改用 Top N 或只按人数猜测对象；未选择的维度写“用户未选择复核”。
-完成后将结构化结果写入 outputs/detective-results.json，并生成 outputs/advisor_detective_YYYYMMDD.xlsx。`, "detective");
+      openRunner(buildInvestigationTaskPrompt(), "detective");
     } catch (error) {
       showNotice(error instanceof Error ? error.message : "背调最终确认失败");
     } finally {
@@ -1833,10 +1796,7 @@ export default function Home() {
       showNotice("请先完成候选导师背调");
       return;
     }
-    openRunner(`请完整读取 skills/advisor-evaluator/SKILL.md，使用当前项目已有的真实候选导师和背调证据生成最终排名。
-
-必须保留评分依据、权重、风险提示和证据来源。缺少必要证据时明确指出，不得用推测补齐。
-    将结构化排名写入 outputs/ranking.json，并按 Skill 的确定性脚本生成 outputs/advisor_application_ready_YYYYMMDD.xlsx。`, "ranking");
+    openRunner(buildRankingTaskPrompt(), "ranking");
   }
 
   async function saveApplicationMaterialsDraft(
@@ -1953,28 +1913,7 @@ export default function Home() {
       showNotice("请先最终确认当前申请材料配置");
       return;
     }
-    const skill = mode === "research_proposal"
-      ? "advisor-research-proposal"
-      : "advisor-outreach";
-    const targetDirectory = `outputs/application-materials/${confirmed.advisorProgramId}`;
-    openRunner(`请完整读取 skills/${skill}/SKILL.md，并严格按本次已确认快照执行。
-
-精确 advisorProgramId：${confirmed.advisorProgramId}
-申请材料确认版本：${confirmed.revision}
-申请材料配置指纹：${confirmed.fingerprint}
-本轮材料：${mode}
-确认顺序：${confirmed.order.join(" -> ")}
-
-申请者真实姓名：${activeProject?.applicantName || ""}
-真实 CV：${activeProject?.cv?.absolutePath || ""}
-
-这是当前项目在 Pipeline 最初已上传并持续复用的 CV。不得因为进入新的 Skill 或阶段而再次要求用户上传、粘贴或重复提供 CV。在任何检索或写作前读取该文件并核对申请者姓名；只有该路径缺失/不可读、文件明显属于其他人，或姓名冲突时才暂停并索取替换文件。若只有某项关键事实缺少依据，仅询问该项事实，不得重新索要整份 CV。姓名为空/含占位符时只询问姓名。不得生成申请者可见的 RP、PDF 或邮件正文，不得使用示例姓名或虚构经历。
-
-先分别核验导师本人/团队文献（advisor_work）与研究领域文献（field_work）。把准备下载的来源写成项目内 JSON，再运行 skills/advisor-pipeline/scripts/fetch_open_literature.mjs；只允许合法公开 PDF，不得绕过付费墙。所有实际引用必须在 ${targetDirectory}/literature/manifest.json 中记录 canonical URL、公开获取依据、读取层级、usedIn、本地路径、SHA-256 与文件大小，并在审计文件逐项列出 literatureId。
-
-${mode === "research_proposal"
-  ? `先核验该项目实际要求 RP、research statement 还是 Statement of Purpose；官方模板、篇幅和引用格式优先。若本轮确需 RP/讨论用 concept note，写入 ${targetDirectory}/research-proposal.tex、references.bib、proposal-evidence.md、proposal-review.md，使用 build_research_proposal.mjs 生成 research-proposal.pdf 与 proposal-build.json，并逐页渲染检查。申请者可见文件不得出现内部 TEST/DRAFT/DO NOT SUBMIT 标记；待核实项放在 review 和交付说明。`
-  : `写入干净可复制的 ${targetDirectory}/outreach-email.txt 和内部核验文件 outreach-audit.md。先核实官方联系规则；只使用真实申请者经历，不得在邮件正文放 TEST/DRAFT/DO NOT SEND 标记，不得承诺导师回复或发送邮件。`}`, mode);
+    openRunner(buildApplicationMaterialTaskPrompt(mode), mode);
   }
 
   async function connectCustomApi() {
@@ -3940,16 +3879,36 @@ ${mode === "research_proposal"
                         {field.label || runInputFieldLabels[field.id] || field.id}
                         {field.required ? " *" : ""}
                       </span>
-                      <input
-                        value={inputAnswers[field.id] || ""}
-                        placeholder={field.hint || ""}
-                        onChange={(event) =>
-                          setInputAnswers((current) => ({
-                            ...current,
-                            [field.id]: event.target.value,
-                          }))
-                        }
-                      />
+                      {field.id === "cv" ? (
+                        <>
+                          <input
+                            type="file"
+                            accept=".pdf,.doc,.docx,.txt,.md"
+                            disabled={inputSaving || uploadState === "uploading"}
+                            onChange={(event) =>
+                              void uploadCv(event.target.files?.[0])
+                            }
+                          />
+                          <small>
+                            {inputAnswers.cv
+                              ? `${fileName} · 已保存，可继续原任务`
+                              : uploadState === "uploading"
+                                ? "正在保存 CV…"
+                                : "请选择一份新的真实 CV；原 Agent 会话会保留"}
+                          </small>
+                        </>
+                      ) : (
+                        <input
+                          value={inputAnswers[field.id] || ""}
+                          placeholder={field.hint || ""}
+                          onChange={(event) =>
+                            setInputAnswers((current) => ({
+                              ...current,
+                              [field.id]: event.target.value,
+                            }))
+                          }
+                        />
+                      )}
                     </label>
                   ))}
                   <button

@@ -106,6 +106,96 @@ test("literature downloads reject unsafe targets and re-check redirects", async 
   }
 });
 
+test("literature downloads reuse hash-verified local PDFs unless refresh is explicit", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "advisor-material-reuse-"));
+  const advisorProgramId = "advisor__program";
+  const sourceFile = resolve(root, "sources.json");
+  const sources = [
+    {
+      literatureId: "LIT-A01",
+      category: "advisor_work",
+      title: "Advisor paper",
+      authors: ["Real Advisor"],
+      year: 2025,
+      canonicalUrl: "https://example.org/advisor-paper",
+      downloadUrl: "https://example.org/advisor-paper.pdf",
+      accessBasis: "author_public_copy",
+      inspectionLevel: "full_text",
+      relevance: "Target-specific evidence",
+      usedIn: ["research_proposal"],
+      advisorRelationship: {
+        type: "advisor_author",
+        advisorName: "Real Advisor",
+        matchedAuthors: ["Real Advisor"],
+        evidenceUrl: "https://example.org/advisor",
+        note: "The selected advisor is in the author list.",
+      },
+    },
+    {
+      literatureId: "LIT-F01",
+      category: "field_work",
+      title: "Independent field paper",
+      authors: ["Independent Author"],
+      year: 2024,
+      canonicalUrl: "https://example.org/field-paper",
+      downloadUrl: "https://example.org/field-paper.pdf",
+      accessBasis: "disciplinary_repository",
+      inspectionLevel: "full_text",
+      relevance: "Independent field evidence",
+      independenceNote: "The target advisor is not an author.",
+      usedIn: ["research_proposal"],
+    },
+  ];
+  await writeFile(
+    sourceFile,
+    JSON.stringify({ targetAdvisorName: "Real Advisor", sources }),
+  );
+  let calls = 0;
+  const fetchImpl = async (url) => {
+    calls += 1;
+    return new Response(Buffer.from(`%PDF-1.4\n${url}\n%%EOF`), {
+      status: 200,
+      headers: { "content-type": "application/pdf" },
+    });
+  };
+  const options = {
+    root,
+    advisorProgramId,
+    sourceFile: "sources.json",
+    confirmedRevision: 1,
+    confirmedFingerprint: "fp",
+    fetchImpl,
+  };
+  try {
+    const first = await fetchOpenLiterature({
+      ...options,
+      now: "2026-01-01T00:00:00.000Z",
+    });
+    assert.equal(first.downloadedCount, 2);
+    assert.equal(first.reusedCount, 0);
+    assert.equal(calls, 2);
+
+    const second = await fetchOpenLiterature({
+      ...options,
+      now: "2026-01-02T00:00:00.000Z",
+    });
+    assert.equal(second.downloadedCount, 0);
+    assert.equal(second.reusedCount, 2);
+    assert.equal(calls, 2, "verified local files should avoid network fetches");
+
+    const refreshed = await fetchOpenLiterature({
+      ...options,
+      refresh: true,
+      now: "2026-01-03T00:00:00.000Z",
+    });
+    assert.equal(refreshed.downloadedCount, 2);
+    assert.equal(refreshed.reusedCount, 0);
+    assert.equal(calls, 4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a material artifact is complete only with both literature classes and verified local PDFs", async () => {
   const root = await mkdtemp(resolve(tmpdir(), "advisor-material-artifact-"));
   const advisorProgramId = "advisor__program";

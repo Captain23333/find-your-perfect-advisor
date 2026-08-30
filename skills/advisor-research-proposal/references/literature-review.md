@@ -89,29 +89,3 @@ main contradiction/boundary, and method precedent are sufficiently stable to
 justify the proposal within its word budget. Record thin or inaccessible areas
 instead of hiding them. Continue when a central novelty claim still rests on an
 unverified absence or only one search route.
-
-## Research basis
-
-- Aston University describes the proposal review as a brief critical review of
-  key contemporary literature that develops the rationale and theoretical
-  basis of the research questions:
-  https://www.aston.ac.uk/postgraduate-research/phd/propose-your-own-research/how-to-write-a-research-proposal
-- Sussex links questions, critical engagement, original contribution,
-  methodology, ethics, timeline, and bibliography:
-  https://www.sussex.ac.uk/study/phd/apply/tips-research-degrees/research-proposal
-- The open `literature-review-skills` package routes from question refinement to
-  modules, method comparison, contradiction mapping, and a four-question gap
-  test; this skill adopts that staged logic without copying its fixed output:
-  https://github.com/xingtaxueshu/literature-review-skills
-- The open SkillMedev literature-review skill distinguishes a thematic argument
-  from an annotated bibliography and routes exhaustive claims to a systematic
-  review protocol:
-  https://github.com/SkillMedev/academic-researcher/blob/main/skills/literature-review/SKILL.md
-- A login-read Xiaohongshu RP breakdown usefully emphasizes the same internal
-  loops: the review supports the gap, methods answer questions, expected results
-  are not actual findings, and discussion returns to the review context:
-  https://www.xiaohongshu.com/explore/6a29637c000000001702bef5
-- A second Xiaohongshu post offers a one-day sequence from title to questions,
-  review, gap, and methods. Use the sequence only; its time claim is anecdotal
-  and cannot replace source verification, ethics, access, or feasibility work:
-  https://www.xiaohongshu.com/explore/68b091fe000000001d037fe5

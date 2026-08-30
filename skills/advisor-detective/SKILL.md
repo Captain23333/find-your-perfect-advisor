@@ -24,9 +24,12 @@ Read:
 - `project.json`
 
 If the full skill set is present, read
-`../advisor-pipeline/references/data-contract.md`. Always read
-`references/investigation-sections.md`. Read
-`references/community-sources.md` only when
+`../advisor-pipeline/references/core-data-contract.md` before shared-record
+writes and `../advisor-pipeline/references/investigation-contract.md` for the
+confirmation/result contract. The menu script already owns the full 11-section
+catalog. During a confirmed run, look up only the selected section IDs in
+`references/investigation-sections.md`; do not load unselected section detail.
+Read `references/community-sources.md` only when
 `guidance_group_ecology` or another reputation-related section is selected.
 
 Require exact `investigation.confirmed.selectedAdvisorProgramIds` and

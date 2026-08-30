@@ -138,6 +138,12 @@ outputs/application-materials/<advisorProgramId>/literature/
   field-work/<literatureId>.pdf
 ```
 
+By default, rerunning the downloader reuses a local PDF only when its manifest
+path, canonical/download URLs, public access basis, byte count, and SHA-256 all
+still match. Any mismatch downloads again. Use `--refresh` when the user asks to
+re-fetch unchanged source URLs; local reuse never bypasses relationship,
+category, access-basis, or completion validation.
+
 Never bypass a paywall, institutional login, robots/access control, or
 redistribution restriction. If a cited work has no legal public PDF, find a
 lawful repository/preprint/author copy or do not use it as a cited source.

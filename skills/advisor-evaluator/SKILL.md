@@ -21,8 +21,8 @@ Read:
 - `outputs/evidence.json`
 - `project.json`
 
-If present, read `../advisor-pipeline/references/data-contract.md`. Always read
-`references/workbook-contract.md`.
+If present, read `../advisor-pipeline/references/core-data-contract.md`. Read
+`references/workbook-contract.md` before building or validating the workbook.
 
 ## Alignment
 

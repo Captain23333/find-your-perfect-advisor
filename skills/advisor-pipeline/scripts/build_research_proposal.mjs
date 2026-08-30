@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { isExecutedDirectly } from "./direct-execution.mjs";
 import { isSafeAdvisorProgramId } from "./project-contract.mjs";
 
 function option(args, flag) {
@@ -121,7 +121,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isExecutedDirectly(import.meta.url)) {
   main().catch((error) => {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

@@ -1,12 +1,10 @@
 ---
 name: advisor-finder
 description: >
-  Find and shortlist academic advisors for PhD, MPhil, MS, Postdoc, or RA
-  applications. Use when a user asks to find professors, supervisors, mentors,
-  or suitable programs from a CV and research interests. Discover real
-  candidates, score research fit, map advisors to application programs, collect
-  official objective application facts for the shortlist, and produce a
-  source-backed candidate workbook.
+  Find and shortlist real academic advisors from an applicant CV and target
+  scope for PhD, MPhil, MS, Postdoc, or RA applications. Score research fit,
+  map shortlisted advisors to programs, verify objective application facts,
+  and produce source-backed candidate records and a workbook.
 ---
 
 # Advisor Finder
@@ -41,8 +39,9 @@ cutoff, location, or excluded institutions. Accept a user-selected
 separately.
 
 If the complete Advisor Atlas skill set is present, read
-`../advisor-pipeline/references/data-contract.md`. Read
-`references/application-facts.md` before the objective feasibility pass.
+`../advisor-pipeline/references/core-data-contract.md` before structured writes.
+Read `references/application-facts.md` only when the shortlist is ready for the
+objective feasibility pass.
 
 ## Output state
 

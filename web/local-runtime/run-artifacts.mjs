@@ -246,6 +246,7 @@ export function parseInputRequest(payload) {
   if (!source || typeof source !== "object") return null;
   const rawFields = Array.isArray(source.fields) ? source.fields : [];
   const allowed = new Set([
+    "cv",
     "degreeLevel",
     "degree",
     "season",

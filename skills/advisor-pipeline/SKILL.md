@@ -31,7 +31,9 @@ when encountered and fill only shortlist gaps before Detective.
 
 ## Shared contract
 
-Read `references/data-contract.md` before writing project state.
+Read the short `references/data-contract.md` router first, then only the
+stage-specific contract it names. Do not load Detective or application-material
+schemas during Finder, or Finder schemas during a material-only continuation.
 
 Use:
 
@@ -50,6 +52,9 @@ summaries only.
 Web-created projects already contain the shared files. When this Skill is used
 directly from Codex CLI, Codex Desktop, or Claude Code in a user-created folder,
 initialize the same contract before starting if it is missing:
+
+Read `references/core-data-contract.md` for this bootstrap and shared-record
+schema.
 
 1. Run `node .agents/skills/advisor-pipeline/scripts/init_project.mjs --root "$PWD"`
    (or the equivalent `.claude/skills/` path). This deterministic initializer
@@ -130,6 +135,10 @@ Pause for user selection after the objective screen.
 
 This is a mandatory interactive gate in both Web and direct CLI use. Finishing
 Finder does not authorize Detective research.
+
+Read `references/investigation-contract.md` before confirming or running this
+stage. The renderer owns the full option catalog, so do not separately load the
+catalog merely to reproduce the menu.
 
 For direct CLI users, perform the following steps in order:
 

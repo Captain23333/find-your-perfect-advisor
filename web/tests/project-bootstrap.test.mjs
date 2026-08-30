@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -119,6 +119,38 @@ test("--check reports incomplete structure and is strictly read-only", async () 
     assert.equal(processResult.stderr, "");
     assert.equal(JSON.parse(processResult.stdout).root, missingRoot);
     await assert.rejects(access(missingRoot));
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("the CLI still executes when its script path is a symlink", async () => {
+  const parent = await mkdtemp(resolve(tmpdir(), "advisor-cli-symlink-"));
+  const projectRoot = resolve(parent, "project");
+  const script = fileURLToPath(
+    new URL(
+      "../../skills/advisor-pipeline/scripts/init_project.mjs",
+      import.meta.url,
+    ),
+  );
+  const linkedScript = resolve(parent, "init-project.mjs");
+  try {
+    await symlink(script, linkedScript);
+    const processResult = await new Promise((resolveExit, reject) => {
+      const child = spawn(process.execPath, [linkedScript, "--root", projectRoot], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.once("error", reject);
+      child.once("exit", (code) => resolveExit({ code, stdout, stderr }));
+    });
+    assert.equal(processResult.code, 0);
+    assert.equal(processResult.stderr, "");
+    assert.equal(JSON.parse(processResult.stdout).root, projectRoot);
+    await access(resolve(projectRoot, "project.json"));
   } finally {
     await rm(parent, { recursive: true, force: true });
   }

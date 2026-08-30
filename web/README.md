@@ -8,6 +8,7 @@
 - 多个申请项目的独立目录、状态和运行记录
 - Codex 订阅、Claude 订阅与自定义 Responses API 三种执行方式
 - CV 上传、递进式三阶段工作流、客观申请筛选、候选导师和背调状态
+- CV 不合格时在同一 run / Agent 会话中上传替换文件并继续
 - 排名后的精确导师/材料/顺序确认，以及 LaTeX/BibTeX/PDF RP、可复制陶瓷信和本地文献核验包；页面直接列出引用，导师文献需通过本人署名或公开团队关系核验
 - 精确导师—项目选择和勾选式调查维度
 - 显式授权、刷新和清除的本地社区资料缓存
@@ -67,9 +68,17 @@ projects/
 
 网页和终端后端使用同一个项目目录。`projects/` 和运行配置目录 `.advisor-atlas/` 均已加入 Git 忽略列表，避免把个人申请材料误提交到仓库。
 
-每次启动 Agent 前，后端会把仓库当前版本的全部 Skills（包括后置 RP 与套磁信 Skills）同步到项目的 `.agents/skills/` 和 `.claude/skills/`；个人 CV、输出、社区缓存和项目选择不会被覆盖。
+每次启动 Agent 前，后端会把仓库当前版本的全部 Skills（包括后置 RP 与套磁信 Skills）同步到项目的 `.agents/skills/` 和 `.claude/skills/`；个人 CV、输出、社区缓存和项目选择不会被覆盖。同步到磁盘不等于全部加载进模型上下文：每个 Web mode 只注入当前阶段的 Skill 入口和阶段约束，reference 再按当前动作读取。
 
 每次运行阶段完成后会更新项目根目录的 `status.json`。Finder 会更新候选、导师、项目和证据记录；网页在运行结束后重新读取这些文件。候选行使用稳定的 `advisorProgramId`，同名导师或多项目不会仅靠姓名对齐。
+
+## 运行上下文与续跑
+
+- `finder`、`detective`、`ranking`、`research_proposal` 和 `outreach_email` 分别加载对应 Skill，不先读取完整 Pipeline 或其他阶段 Skill。
+- 公共安全边界与当前 mode 的产物契约由本地 runtime 统一注入一次，前端只传当前任务意图。
+- Agent 输出结构化 `input.requested` 后，运行状态变为 `needs_input`，底层进程和 provider thread 保持可继续。
+- `cv` 请求使用专用上传控件；文件先写入当前项目，再调用原 run 的 continue endpoint，不创建新 run。
+- 重复的 MCP/HTTP 重连只在主进度中保留最新累计提示，完整诊断仍在技术详情中。
 
 ## 调查范围与社区资料
 
@@ -170,4 +179,8 @@ npm run backend -- run \
 ```bash
 npm run build
 npm test
+npm run lint
 ```
+
+Skill/Prompt 开销审计和风险决策见
+[`../docs/SKILL_TOKEN_OPTIMIZATION.md`](../docs/SKILL_TOKEN_OPTIMIZATION.md)。
