@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import fs from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { SpreadsheetFile, Workbook } from "@oai/artifact-tool";
+import { resolve } from "node:path";
+import { writeWorkbook } from "../../advisor-pipeline/scripts/workbook-runtime.mjs";
 
 function args(argv) {
   const parsed = {};
@@ -20,46 +20,14 @@ function text(value) {
   return Array.isArray(value) ? value.filter(Boolean).join("\n") : String(value ?? "");
 }
 
-function setupSheet(workbook, name, headers, rows, widths) {
-  const sheet = workbook.worksheets.add(name);
-  sheet.showGridLines = false;
-  sheet.getRangeByIndexes(0, 0, 1, headers.length).values = [headers];
-  sheet.getRangeByIndexes(0, 0, 1, headers.length).format = {
-    fill: "#4338A8",
-    font: { bold: true, color: "#FFFFFF" },
-    wrapText: true,
-    horizontalAlignment: "center",
-    verticalAlignment: "center",
-  };
-  if (rows.length) {
-    sheet.getRangeByIndexes(1, 0, rows.length, headers.length).values = rows;
-    sheet.getRangeByIndexes(1, 0, rows.length, headers.length).format = {
-      wrapText: true,
-      verticalAlignment: "top",
-      borders: {
-        insideHorizontal: { style: "thin", color: "#DDD9EA" },
-        bottom: { style: "thin", color: "#DDD9EA" },
-      },
-    };
-    sheet.tables.add(
-      sheet.getRangeByIndexes(0, 0, rows.length + 1, headers.length),
-      true,
-      `T${name.replace(/[^A-Za-z0-9]/g, "") || "Rows"}Table`,
-    );
-  }
-  sheet.freezePanes.freezeRows(1);
-  sheet.freezePanes.freezeColumns(2);
-  widths.forEach((width, index) => {
-    sheet.getRangeByIndexes(0, index, rows.length + 1, 1).format.columnWidth = width;
-  });
-  return sheet;
+function tableSheet(name, headers, rows, widths) {
+  return { name, headers, rows, widths, freezeRows: 1, freezeColumns: 2 };
 }
 
 const parsed = args(process.argv.slice(2));
 const input = JSON.parse(await fs.readFile(parsed.input, "utf8"));
 const sections = Array.isArray(input.sections) ? input.sections : [];
 const advisors = Array.isArray(input.advisors) ? input.advisors : [];
-const workbook = Workbook.create();
 
 const headers = ["advisorProgramId", "导师", "学校与项目", ...sections.map((item) => item.label), "风险与冲突"];
 const rows = advisors.map((advisor) => [
@@ -76,16 +44,13 @@ const rows = advisors.map((advisor) => [
   ),
   text(advisor.risksAndConflicts),
 ]);
-setupSheet(
-  workbook,
+const sheets = [tableSheet(
   "1_导师背调汇总",
   headers,
   rows,
   [30, 18, 28, ...sections.map(() => 38), 40],
-);
-
-setupSheet(
-  workbook,
+),
+tableSheet(
   "2_证据",
   ["导师", "调查维度", "结论/线索", "证据强度", "核验状态", "来源 URL", "查询日期"],
   (input.evidence || []).map((row) => [
@@ -98,10 +63,8 @@ setupSheet(
     row.accessedAt || "",
   ]),
   [18, 24, 50, 18, 18, 48, 20],
-);
-
-setupSheet(
-  workbook,
+),
+tableSheet(
   "3_调查配置",
   ["项目", "内容"],
   [
@@ -112,9 +75,16 @@ setupSheet(
     ["证据边界", "匿名资料仅作线索；镜像不算独立来源；保留反驳、更正与冲突。"],
   ],
   [24, 90],
-);
+),
+];
 
-await fs.mkdir(dirname(resolve(parsed.output)), { recursive: true });
-const output = await SpreadsheetFile.exportXlsx(workbook);
-await output.save(resolve(parsed.output));
-console.log(JSON.stringify({ output: resolve(parsed.output), advisors: advisors.length }));
+const result = await writeWorkbook(
+  { sheets },
+  resolve(parsed.output),
+  { forcePortable: process.env.ADVISOR_ATLAS_FORCE_PORTABLE_XLSX === "1" },
+);
+console.log(JSON.stringify({
+  output: resolve(parsed.output),
+  advisors: advisors.length,
+  workbookEngine: result.engine,
+}));

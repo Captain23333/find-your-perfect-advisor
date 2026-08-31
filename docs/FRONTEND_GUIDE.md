@@ -75,9 +75,9 @@ SHA-256 和文件大小。第二个材料只有在已确认顺序中的前一个
 
 前端不能只根据 `status.json` 中的阶段名称判断完成，因为中断的 Agent 可能已经提前更新状态。
 
-- Phase 1 完成：`outputs/candidates.json` 是合法数组、至少一个候选，且每个候选都有稳定的 `advisorProgramId`。
-- Phase 2 完成：`outputs/detective-results.json` 非空，`confirmedRevision` / `confirmedFingerprint` 与本次确认一致，每个已选维度都有结论或显式的 `not_completed` 标记。
-- Phase 3 完成：`outputs/ranking.json` 是合法排名数组，且至少有一条带 `rank` 或可比较分数的结果。
+- Phase 1 完成：`outputs/candidates.json` 是合法数组、至少一个候选，且每个候选都有稳定的 `advisorProgramId`；本次运行还生成了完整的 `advisor_shortlist_YYYYMMDD.xlsx`。
+- Phase 2 完成：`outputs/detective-results.json` 非空，`confirmedRevision` / `confirmedFingerprint` 与本次确认一致，每个已选维度都有结论或显式的 `not_completed` 标记；本次运行还生成了完整的 `advisor_detective_YYYYMMDD.xlsx`。
+- Phase 3 完成：`outputs/ranking.json` 是合法排名数组，且至少有一条带 `rank` 或可比较分数的结果；本次运行还生成了完整的 `advisor_application_ready_YYYYMMDD.xlsx`。
 - RP 完成：当前真实 CV 可读取且申请者姓名已确认；先记录目标项目官方文档类型、模板和篇幅；`research-proposal.tex`、`references.bib`、编译后的 `research-proposal.pdf`、`proposal-build.json` 和两个审计文件均存在，源码/PDF 哈希与确认版本一致。manifest 同时包含导师/团队与领域文献；导师文献必须记录可核验的本人署名或团队作者关系，领域文献不得把导师署名论文伪装成独立证据；BibTeX key 使用 literatureId，所有实际引用均有合法公开本地 PDF 并在 `proposal-evidence.md` 记录。若官方要求匿名 RP，姓名可不印在 PDF 上，但前置身份核验不能跳过。
 - 陶瓷信完成：当前真实 CV 可读取、申请者姓名已确认且最终签名使用该姓名；干净可复制的 `outreach-email.txt` 与 `outreach-audit.md` 存在，并通过同样的文献包与关系证据校验；所有论文驱动的个性化在审计中记录 literatureId。Web 会直接列出 ID、分类、题名、作者、canonical URL 和本地路径。对外正文不得出现内部 TEST/DRAFT/DO NOT SEND/SUBMIT 标记。
 

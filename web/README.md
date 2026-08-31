@@ -101,6 +101,11 @@ projects/
 如果 Custom API 日志出现 `spawn codex ENOENT`，说明这是更新依赖前的旧安装，
 不是中转站拒绝了请求。进入 `web` 目录重新执行 `npm install` 并重启控制台即可。
 
+Excel Builder 不要求普通用户安装 `@oai/artifact-tool`。运行环境提供该组件时
+使用完整 Spreadsheet Runtime；未提供时自动使用仓库内置的便携 OOXML 引擎。
+Finder、Detective、Ranking 只有在结构化 JSON 与对应 XLSX 都通过校验后才显示
+`completed`，缺少工作簿时显示 `partial`，可复用现有 JSON 单独重新生成。
+
 控制台默认使用项目写入边界，不启用完整磁盘访问，也不会自动 commit、push、部署或发送邮件。
 
 ## 网页授权流程

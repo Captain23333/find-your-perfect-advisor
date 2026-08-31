@@ -15,6 +15,25 @@ import {
   verifyRunArtifacts,
 } from "../local-runtime/run-artifacts.mjs";
 import { createProjectStore } from "../local-runtime/project-store.mjs";
+import { writePortableXlsx } from "../../skills/advisor-pipeline/scripts/workbook-runtime.mjs";
+
+async function writeWorkbookFixture(outputs, name) {
+  await writePortableXlsx(
+    {
+      sheets: [
+        {
+          name: "结果",
+          headers: ["状态"],
+          rows: [["ok"]],
+          widths: [18],
+          freezeRows: 1,
+          freezeColumns: 1,
+        },
+      ],
+    },
+    resolve(outputs, name),
+  );
+}
 
 function fakeRun(id, projectId, overrides = {}) {
   return {
@@ -151,6 +170,32 @@ test("finder is only complete with a real candidate array and stable ids", async
       resolve(outputs, "candidates.json"),
       JSON.stringify([{ advisorProgramId: "ap-1", name: "Real Advisor" }]),
     );
+    const missingWorkbook = await verifyRunArtifacts({
+      projectPath: project.path,
+      mode: "finder",
+    });
+    assert.equal(missingWorkbook.complete, false);
+    assert.match(missingWorkbook.missing.join(" "), /advisor_shortlist/);
+
+    const brokenWorkbook = resolve(outputs, "advisor_shortlist_broken.xlsx");
+    await writeFile(brokenWorkbook, "not an xlsx");
+    const invalidWorkbook = await verifyRunArtifacts({
+      projectPath: project.path,
+      mode: "finder",
+    });
+    assert.equal(invalidWorkbook.complete, false);
+    assert.match(invalidWorkbook.missing.join(" "), /不是完整可打开/);
+
+    await rm(brokenWorkbook);
+    await writeWorkbookFixture(outputs, "advisor_shortlist_20260831.xlsx");
+    const stale = await verifyRunArtifacts({
+      projectPath: project.path,
+      mode: "finder",
+      startedAt: new Date(Date.now() + 5_000).toISOString(),
+    });
+    assert.equal(stale.complete, false);
+    assert.match(stale.missing.join(" "), /旧工作簿/);
+
     const good = await verifyRunArtifacts({ projectPath: project.path, mode: "finder" });
     assert.equal(good.complete, true);
     assert.deepEqual(good.missing, []);
@@ -200,6 +245,7 @@ test("detective results from an older confirmation do not count as this round", 
         confirmedFingerprint: "fingerprint-now",
       }),
     );
+    await writeWorkbookFixture(outputs, "advisor_detective_20260831.xlsx");
     const current = await verifyRunArtifacts(baseArgs);
     assert.equal(current.complete, true);
 
@@ -304,6 +350,13 @@ test("ranking needs a sortable result, not just valid JSON", async () => {
       resolve(outputs, "ranking.json"),
       JSON.stringify({ rankings: [{ advisorProgramId: "ap-1", rank: 1, totalScore: 8.4 }] }),
     );
+    const noWorkbook = await verifyRunArtifacts({
+      projectPath: project.path,
+      mode: "ranking",
+    });
+    assert.equal(noWorkbook.complete, false);
+    assert.match(noWorkbook.missing.join(" "), /advisor_application_ready/);
+    await writeWorkbookFixture(outputs, "advisor_application_ready_20260831.xlsx");
     const good = await verifyRunArtifacts({ projectPath: project.path, mode: "ranking" });
     assert.equal(good.complete, true);
   } finally {

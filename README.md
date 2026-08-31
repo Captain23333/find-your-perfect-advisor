@@ -501,6 +501,9 @@ skills/
 - `runs/<run-id>/events.ndjson`（Web 模式）
 
 具体结果取决于使用的 Skill、搜索范围和模型是否完成了对应任务。
+三类 Excel 均由仓库随附的确定性 Builder 生成：有 Codex Spreadsheet Runtime
+时优先使用它，普通 Windows/macOS/Linux 环境则自动使用无额外安装的 OOXML
+后备。用户不需要也不应手动安装 `@oai/artifact-tool`。
 
 ### 社区资料隐私与版权边界
 
@@ -540,7 +543,19 @@ skills/
 
 ### 为什么模型说“做完了”，页面却显示“本轮已结束，但尚未产生 Phase 2 结果”？
 
-因为完成状态以磁盘上的真实产物为准，而不是模型的最后一句话。后端会按阶段校验 `candidates.json` / `detective-results.json` / `ranking.json`；RP 和陶瓷信还会校验确认版本、两类文献、目标导师姓名、导师/团队关系证据、本地 PDF、manifest 哈希和审计中的 literatureId。文件缺失、关系错配、JSON 非法、结果为空或属于旧确认版本，都会显示为 `partial` 并列出缺了什么。
+因为完成状态以磁盘上的真实产物为准，而不是模型的最后一句话。后端会按阶段校验 `candidates.json` / `detective-results.json` / `ranking.json` 以及对应的完整 Excel；RP 和陶瓷信还会校验确认版本、两类文献、目标导师姓名、导师/团队关系证据、本地 PDF、manifest 哈希和审计中的 literatureId。文件缺失、关系错配、JSON 非法、结果为空或属于旧确认版本，都会显示为 `partial` 并列出缺了什么。
+
+### 日志提示缺少 `@oai/artifact-tool` 或反复出现 `apply_patch verification failed`，怎么办？
+
+更新到最新版本后，Excel Builder 会在该组件不可用时自动走仓库内置的便携
+OOXML 路径，不再要求 Agent 临时创建和修改 `build_phase*_artifacts.mjs`。请先
+`git pull`，再重新启动 Web；已有 JSON 和证据可以直接复用，只重新生成缺少的
+Excel，不需要重新搜索导师或重跑整个阶段。
+
+如果最新版本仍出现该提示，请检查运行日志中的 `workbookEngine`。正常值为
+`artifact-tool` 或 `portable-ooxml`；页面只有在 JSON 与对应 Excel 都存在且
+Excel 是完整 XLSX 时才会显示该阶段完成。设计与风险说明见
+[`docs/EXCEL_RUNTIME_COMPATIBILITY.md`](docs/EXCEL_RUNTIME_COMPATIBILITY.md)。
 
 ### Web 为什么检测不到 Codex 或 Claude？
 

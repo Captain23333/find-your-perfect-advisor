@@ -174,9 +174,14 @@ stable `advisorProgramId`, not only a name:
 }
 ```
 
-Generate the shortlist workbook with `scripts/build_advisor_excel.mjs`. Do not
-draft outreach content until advisor-specific contact requirements have been
-checked.
+Generate `advisor_shortlist_YYYYMMDD.xlsx` with
+`scripts/build_advisor_excel.mjs`. The shipped builder automatically uses the
+Codex spreadsheet runtime when available and its bundled portable OOXML engine
+otherwise. Do not install spreadsheet packages, create a replacement builder,
+or patch an ad-hoc executable in `runs/`. Prepare only the builder's JSON input,
+run the shipped script once, and report a clear partial result if it still
+fails. Do not draft outreach content until advisor-specific contact
+requirements have been checked.
 
 ## Quality rules
 

@@ -155,7 +155,10 @@ Maintain a compact `DETECTIVE_STATE.md` summary containing:
 
 Generate `advisor_detective_YYYYMMDD.xlsx` with a deterministic builder. Include
 only the selected-section result columns plus an explicit configuration and
-evidence sheet. Mark unselected sections as `用户未选择复核`.
+evidence sheet. The shipped builder already falls back to portable OOXML when
+the Codex spreadsheet runtime is unavailable; do not install packages or write
+and patch a replacement executable under `runs/`. Mark unselected sections as
+`用户未选择复核`.
 
 ## Completion
 

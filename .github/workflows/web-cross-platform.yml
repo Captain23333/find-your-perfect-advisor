@@ -66,6 +66,14 @@ jobs:
           Set-Location (Join-Path $env:INSTALL_ROOT "web")
           npm install
 
+      - name: Generate all workbooks from copied Skills without private runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          Set-Location (Join-Path $env:INSTALL_ROOT "web")
+          node --test tests/workbook-builders.test.mjs
+
       - name: Run npm run dev and verify Windows Ctrl+C shutdown
         shell: pwsh
         run: |

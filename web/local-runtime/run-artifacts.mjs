@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { verifyApplicationMaterialArtifacts } from "../../skills/advisor-pipeline/scripts/application-materials-artifacts.mjs";
 
@@ -41,6 +41,60 @@ async function readJsonFile(projectPath, ...segments) {
   } catch {
     return { exists: false, value: null, filePath };
   }
+}
+
+async function verifyWorkbook(projectPath, prefix, startedAt = null) {
+  const outputDirectory = resolve(projectPath, "outputs");
+  let names = [];
+  try {
+    names = await readdir(outputDirectory);
+  } catch {
+    return { missing: [`outputs/${prefix}_YYYYMMDD.xlsx 尚未生成`] };
+  }
+  const candidates = [];
+  for (const name of names) {
+    if (!name.startsWith(`${prefix}_`) || !name.toLowerCase().endsWith(".xlsx")) continue;
+    const filePath = resolve(outputDirectory, name);
+    try {
+      const details = await stat(filePath);
+      if (details.isFile()) candidates.push({ name, filePath, details });
+    } catch {
+      // A concurrently replaced file is simply not a valid completion artifact yet.
+    }
+  }
+  candidates.sort((left, right) => right.details.mtimeMs - left.details.mtimeMs);
+  const workbook = candidates[0];
+  if (!workbook) return { missing: [`outputs/${prefix}_YYYYMMDD.xlsx 尚未生成`] };
+  if (startedAt) {
+    const startedAtMs = Date.parse(startedAt);
+    if (Number.isFinite(startedAtMs) && workbook.details.mtimeMs + 2_000 < startedAtMs) {
+      return { missing: [`${workbook.name} 是本次运行之前的旧工作簿`] };
+    }
+  }
+  const bytes = await readFile(workbook.filePath);
+  const startsWithZip = bytes.length >= 4 && bytes.readUInt32LE(0) === 0x04034b50;
+  const endSearchStart = Math.max(0, bytes.length - 65_557);
+  const hasZipEnd = bytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06])) >= endSearchStart;
+  const packageText = bytes.toString("latin1");
+  const hasWorkbookParts =
+    packageText.includes("[Content_Types].xml") &&
+    packageText.includes("xl/workbook.xml") &&
+    packageText.includes("xl/worksheets/sheet1.xml");
+  if (bytes.length < 512 || !startsWithZip || !hasZipEnd || !hasWorkbookParts) {
+    return { missing: [`${workbook.name} 不是完整可打开的 XLSX 文件`] };
+  }
+  return { missing: [], workbookPath: workbook.filePath };
+}
+
+function combineArtifactChecks(primary, workbook) {
+  return {
+    missing: [...primary.missing, ...workbook.missing],
+    counts: {
+      ...primary.counts,
+      workbookCount: workbook.missing.length ? 0 : 1,
+    },
+    ...(workbook.workbookPath ? { workbookPath: workbook.workbookPath } : {}),
+  };
 }
 
 function verifyFinder(file) {
@@ -214,22 +268,28 @@ export async function verifyRunArtifacts({
   }
   if (mode === "detective") {
     const file = await readJsonFile(projectPath, "outputs", "detective-results.json");
-    const outcome = verifyDetective(file, {
+    const primary = verifyDetective(file, {
       confirmedRevision,
       confirmedFingerprint,
       selectedAdvisorProgramIds,
       selectedSections,
       startedAt,
     });
+    const workbook = await verifyWorkbook(projectPath, "advisor_detective", startedAt);
+    const outcome = combineArtifactChecks(primary, workbook);
     return { complete: outcome.missing.length === 0, ...outcome };
   }
   if (mode === "ranking") {
     const file = await readJsonFile(projectPath, "outputs", "ranking.json");
-    const outcome = verifyRanking(file);
+    const primary = verifyRanking(file);
+    const workbook = await verifyWorkbook(projectPath, "advisor_application_ready", startedAt);
+    const outcome = combineArtifactChecks(primary, workbook);
     return { complete: outcome.missing.length === 0, ...outcome };
   }
   const file = await readJsonFile(projectPath, "outputs", "candidates.json");
-  const outcome = verifyFinder(file);
+  const primary = verifyFinder(file);
+  const workbook = await verifyWorkbook(projectPath, "advisor_shortlist", startedAt);
+  const outcome = combineArtifactChecks(primary, workbook);
   return { complete: outcome.missing.length === 0, ...outcome };
 }
 

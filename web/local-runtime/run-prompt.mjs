@@ -46,6 +46,7 @@ Finder 专属约束：
 - 目标 shortlist 数量为 ${shortlistTarget}。单一学校/院系/研究所/实验室先覆盖完整合理官方名册，通常约 ${Math.min(60, shortlistTarget * 2)} 位相关候选；跨校或地区范围通常约 ${Math.min(60, shortlistTarget * 3)} 位，最多 60。不得凑数。
 - Finder 只做身份/现职、近期研究、代表作、初步匹配、官方招生信号和 shortlist 客观申请条件；不得提前运行社区风评、组内生态或全面社交调查。
 - 写 outputs/advisor_records.json、program_records.json、evidence.json 和 candidates.json。candidates 每行必须含真实稳定 advisorProgramId、name、school、program、fit、status/statusTone、feasibility/feasibilityReasons、directions、evidence；不确定项明确标记待核实。
+- 用 advisor-finder/scripts/build_advisor_excel.mjs 生成 outputs/advisor_shortlist_YYYYMMDD.xlsx。Builder 已内置无依赖 OOXML 后备；不得安装 Excel 包、创建或反复 patch runs/ 下的替代构建脚本。
 - 若 CV 缺失、不可读取或内容明确不是真实申请者 CV，使用字段 cv；若缺少继续所需的 degree、season、target、interests 或 shortlistTarget，使用相应字段。单独输出一行 {"type":"input.requested","reason":"简短说明","fields":[{"id":"cv|degree|season|target|interests|shortlistTarget","label":"字段名","required":true}]} 后结束本轮。不要提问后空转或自行假设。`;
 }
 
@@ -57,6 +58,7 @@ Detective 专属约束：
 - 本次授权快照：${compact(confirmed)}
 - 只调查快照中的精确 selectedAdvisorProgramIds × selectedSections；不得按人数、姓名或 Top N 推断。复用 Finder 证据，只补缺失、过期或冲突项。
 - outputs/detective-results.json 必须绑定 confirmedRevision=${confirmed?.revision ?? "null"} 与 confirmedFingerprint=${compact(confirmed?.fingerprint || null)}，记录 generatedAt，并为每个已选导师和维度写真实结论或 {"status":"not_completed","summary":"原因"}。
+- 用 advisor-detective/scripts/build_detective_excel.mjs 生成 outputs/advisor_detective_YYYYMMDD.xlsx；使用 Builder 自带后备，不得创建或 patch 临时构建脚本。
 - 社区缓存位于 ${resolve(project.path, "community-cache")}。只有 consented=true 且选中相关维度时可读取；searchReady 不为 true 时写“未完成检索”。匿名材料只作 anonymous_lead，不得当作事实或直接改分。`;
 }
 
@@ -66,7 +68,7 @@ function rankingPrompt() {
 Evaluator 专属约束：
 - 读取现有 advisor/program/evidence、当前确认的 Detective 结果与项目约束；按稳定 advisor_program_id 连接，不做新的全量检索。
 - 分开呈现研究匹配、客观可行性和导师适合度；不得把未选择、未检查、未找到、访问失败或冲突证据混为 0 分。
-- 写 outputs/ranking.json，并用确定性 builder 生成申请就绪工作簿；保留严重已核实风险、来源、新鲜度和下一步核验动作。`;
+- 写 outputs/ranking.json，并用 advisor-evaluator/scripts/build_application_ready_excel.mjs 生成 outputs/advisor_application_ready_YYYYMMDD.xlsx；Builder 已内置后备，不得创建或 patch 临时构建脚本。保留严重已核实风险、来源、新鲜度和下一步核验动作。`;
 }
 
 function materialCommonPrompt(project, mode, confirmedMaterialRanking) {

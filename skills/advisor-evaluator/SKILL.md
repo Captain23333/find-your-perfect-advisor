@@ -68,8 +68,10 @@ Recommend application priority using transparent rules:
 ## Workbook
 
 Generate `advisor_application_ready_YYYYMMDD.xlsx` using the deterministic
-builder. The primary sheet must be usable without manually joining other
-sheets.
+builder. It automatically uses the Codex spreadsheet runtime when available and
+portable OOXML otherwise. Do not install packages or create and patch an ad-hoc
+workbook builder. The primary sheet must be usable without manually joining
+other sheets.
 
 Include:
 
