@@ -42,13 +42,20 @@ function prompt(mode, provider = "codex") {
   });
 }
 
+function withPortablePaths(value) {
+  return value.replaceAll("\\", "/");
+}
+
 test("each run loads the exact phase skill instead of the full pipeline", () => {
   for (const [mode, skill] of Object.entries(MODE_SKILLS)) {
-    const value = prompt(mode);
+    const value = withPortablePaths(prompt(mode));
     assert.match(value, new RegExp(`\\.agents/skills/${skill}/SKILL\\.md`));
     assert.doesNotMatch(value, /skills\/advisor-pipeline\/SKILL\.md/);
   }
-  assert.match(prompt("detective", "claude"), /\.claude\/skills\/advisor-detective\/SKILL\.md/);
+  assert.match(
+    withPortablePaths(prompt("detective", "claude")),
+    /\.claude\/skills\/advisor-detective\/SKILL\.md/,
+  );
 });
 
 test("the real Web Phase 1 prompt does not re-introduce the pipeline skill", () => {
@@ -60,9 +67,10 @@ test("the real Web Phase 1 prompt does not re-introduce the pipeline skill", () 
     provider: "codex",
     mode: "finder",
   });
-  assert.match(effectivePrompt, /\.agents\/skills\/advisor-finder\/SKILL\.md/);
-  assert.doesNotMatch(effectivePrompt, /skills\/advisor-pipeline\/SKILL\.md/);
-  assert.match(effectivePrompt, /从 Phase 1 开始导师匹配/);
+  const portablePrompt = withPortablePaths(effectivePrompt);
+  assert.match(portablePrompt, /\.agents\/skills\/advisor-finder\/SKILL\.md/);
+  assert.doesNotMatch(portablePrompt, /skills\/advisor-pipeline\/SKILL\.md/);
+  assert.match(portablePrompt, /从 Phase 1 开始导师匹配/);
 });
 
 test("every real Web task prompt leaves Skill routing to the runtime", () => {
@@ -76,14 +84,16 @@ test("every real Web task prompt leaves Skill routing to the runtime", () => {
 
   for (const [mode, userPrompt] of Object.entries(userPrompts)) {
     assert.doesNotMatch(userPrompt, /SKILL\.md|skills\//);
-    const value = buildRunPrompt({
-      userPrompt,
-      project,
-      runDirectory: "/tmp/advisor-project/runs/run-1",
-      provider: "codex",
-      mode,
-      confirmedMaterialRanking: { advisorProgramId: "ap-1", name: "Real Advisor" },
-    });
+    const value = withPortablePaths(
+      buildRunPrompt({
+        userPrompt,
+        project,
+        runDirectory: "/tmp/advisor-project/runs/run-1",
+        provider: "codex",
+        mode,
+        confirmedMaterialRanking: { advisorProgramId: "ap-1", name: "Real Advisor" },
+      }),
+    );
     assert.match(value, new RegExp(`\\.agents/skills/${MODE_SKILLS[mode]}/SKILL\\.md`));
     assert.doesNotMatch(value, /skills\/advisor-pipeline\/SKILL\.md/);
     assert.ok(value.length < 4_000, `${mode} Web prompt grew to ${value.length} characters`);
