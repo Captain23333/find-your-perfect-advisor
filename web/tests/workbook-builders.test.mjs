@@ -93,6 +93,13 @@ test("all shipped workbook builders run without private npm packages", async () 
         .map(([, value]) => value.toString("utf8"))
         .join("\n");
       assert.match(worksheetText, new RegExp(fixture.expectedText));
+      if (fixture.name === "Evaluator") {
+        assert.match(worksheetText, /履历匹配分/);
+        assert.match(worksheetText, /硬条件状态/);
+        assert.match(worksheetText, /申请路径/);
+        assert.match(worksheetText, /主申/);
+        assert.match(worksheetText, /排除/);
+      }
       assert.doesNotMatch(worksheetText, /#REF!|#DIV\/0!|#VALUE!|#NAME\?|#N\/A/);
     }
 

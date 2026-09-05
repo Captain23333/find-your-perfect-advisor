@@ -40,6 +40,8 @@ Use:
 - `project.json`
 - `status.json`
 - `outputs/candidates.json`
+- `outputs/candidates-excluded.json`
+- `outputs/matching-audit.json`
 - `outputs/advisor_records.json`
 - `outputs/program_records.json`
 - `outputs/evidence.json`
@@ -110,8 +112,9 @@ Write real counts from artifacts. Do not populate demonstration values.
 ## Phase 1: Advisor Finder
 
 Require a target scope plus a real, readable CV. Research interests and weights
-are optional supplements, not replacements for the CV. Persist the user-selected `shortlistTarget` (default 10)
-and invoke Advisor Finder without duplicating its instructions.
+are optional supplements, not replacements for the CV. Persist explicit hard
+constraints, `portfolioStrategy`, and the user-selected `shortlistTarget`
+(default 10), then invoke Advisor Finder without duplicating its instructions.
 
 Finder performs a fixed low-cost scan for identity/current role, high-level
 recent research, representative work, and official recruiting signals. These
@@ -125,7 +128,8 @@ official application facts for the shortlist.
 Completion requires:
 
 - Real advisor and program records.
-- Research-fit shortlist.
+- A pathway-classified, hard-constraint-gated research/profile-fit shortlist.
+- Deterministic `outputs/matching-audit.json` and preserved excluded candidates.
 - Objective feasibility for shortlisted advisor-program combinations.
 - `outputs/candidates.json` for the Web UI.
 
@@ -211,7 +215,8 @@ shallow/medium/high level.
 
 Completion requires:
 
-- Separate research fit, objective feasibility, and advisor-suitability
+- Separate research fit, profile match, hard constraints, application pathway,
+  opportunity evidence, objective feasibility, and advisor-suitability
   conclusions.
 - An application-ready workbook.
 - Source, freshness, missing-field, and risk checks.

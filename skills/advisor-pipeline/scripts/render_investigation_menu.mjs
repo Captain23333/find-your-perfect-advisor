@@ -20,13 +20,24 @@ import {
 import { isExecutedDirectly } from "./direct-execution.mjs";
 
 function candidateRow(candidate, index) {
+  const optionalScore = (value) => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
   return {
     no: index + 1,
     advisorProgramId: String(candidate?.advisorProgramId || "").trim(),
     name: String(candidate?.name || "").trim(),
     school: String(candidate?.school || "").trim(),
     program: String(candidate?.program || "").trim(),
-    fit: Number(candidate?.fit ?? 0),
+    fit: optionalScore(candidate?.fit),
+    profileMatch: optionalScore(candidate?.profileMatch),
+    overallMatch: optionalScore(candidate?.overallMatch),
+    competitiveness: String(candidate?.competitiveness || "unknown").trim(),
+    hardConstraintStatus: String(candidate?.hardConstraintStatus || "unknown").trim(),
+    applicationPathway: String(candidate?.applicationPathway || "unknown").trim(),
+    recommendedAction: String(candidate?.recommendedAction || "verify_pathway").trim(),
     status: String(candidate?.status || "待核实").trim(),
     feasibility: String(candidate?.feasibility || "needs_confirmation").trim(),
   };
@@ -99,15 +110,19 @@ export function renderInvestigationMenu(menu) {
   lines.push("");
   lines.push("## 1. 候选导师—项目组合");
   lines.push("");
-  lines.push("| No. | advisorProgramId | 导师 | 院校 | 项目 | 匹配分 | 招生状态 | 客观可行性 | 当前选择 |");
-  lines.push("| ---: | --- | --- | --- | --- | ---: | --- | --- | --- |");
+  lines.push("| No. | advisorProgramId | 导师 | 院校 | 项目 | 研究匹配 | 履历匹配 | 综合匹配 | 申请定位 | 硬条件 | 申请路径 | 下一步 | 招生状态 | 客观可行性 | 当前选择 |");
+  lines.push("| ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- | --- | --- | --- | --- | --- |");
   const selectedIds = new Set(menu.selection.selectedAdvisorProgramIds);
   for (const candidate of menu.candidates) {
     lines.push(
       `| ${candidate.no} | \`${candidate.advisorProgramId}\` | ${
         candidate.name || "待核实"
       } | ${candidate.school || "待核实"} | ${candidate.program || "待核实"} | ${
-        candidate.fit
+        candidate.fit ?? "—"
+      } | ${candidate.profileMatch ?? "—"} | ${candidate.overallMatch ?? "—"} | ${
+        candidate.competitiveness
+      } | ${candidate.hardConstraintStatus} | ${candidate.applicationPathway} | ${
+        candidate.recommendedAction
       } | ${candidate.status} | ${candidate.feasibility} | ${
         selectedIds.has(candidate.advisorProgramId) ? "已选" : "未选"
       } |`,

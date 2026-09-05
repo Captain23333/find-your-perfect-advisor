@@ -20,6 +20,12 @@ function lines(value) {
   return Array.isArray(value) ? value.filter(Boolean).join("\n") : String(value ?? "");
 }
 
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function tableSheet(name, headers, rows, widths, numberFormats = []) {
   return {
     name,
@@ -45,6 +51,15 @@ const headers = [
   "项目",
   ...interests.map((item) => `${item.name} (${item.weight}%)`),
   "研究匹配分",
+  "履历匹配分",
+  "申请定位",
+  "综合匹配分",
+  "匹配依据",
+  "硬条件状态",
+  "硬条件依据",
+  "申请路径",
+  "机会状态",
+  "建议下一步",
   "招生状态",
   "客观申请可行性",
   "可行性理由",
@@ -61,7 +76,16 @@ const data = rows.map((row, index) => [
   row.school || "",
   row.program || "",
   ...interests.map((interest) => Number(row.fitScores?.[interest.name] ?? 0)),
-  Number.isFinite(Number(row.fit)) ? Number(row.fit) : null,
+  optionalNumber(row.fit),
+  optionalNumber(row.profileMatch),
+  row.competitiveness || "unknown",
+  optionalNumber(row.overallMatch),
+  lines(row.matchReasons),
+  row.hardConstraintStatus || "unknown",
+  lines(row.hardConstraintReasons),
+  row.applicationPathway || "unknown",
+  row.opportunityStatus || "unknown",
+  row.recommendedAction || "verify_pathway",
   row.status || "待核实",
   row.feasibility || "needs_confirmation",
   lines(row.feasibilityReasons),
@@ -71,13 +95,15 @@ const data = rows.map((row, index) => [
   row.email || "",
   lines(row.missingFields),
 ]);
-const fitColumn = 6 + interests.length;
+const fitColumn = 5 + interests.length;
 const sheets = [tableSheet(
   "1_候选与客观筛选",
   headers,
   data,
-  [8, 30, 18, 20, 24, ...interests.map(() => 12), 12, 15, 18, 38, 48, 42, 34, 25, 34],
-  data.length ? [{ column: fitColumn, format: "0.0" }] : [],
+  [8, 30, 18, 20, 24, ...interests.map(() => 12), 12, 12, 14, 12, 42, 14, 42, 18, 16, 18, 15, 18, 38, 48, 42, 34, 25, 34],
+  data.length
+    ? [fitColumn, fitColumn + 1, fitColumn + 3].map((column) => ({ column, format: "0.0" }))
+    : [],
 ),
 tableSheet(
   "2_官方申请条件",
@@ -86,6 +112,8 @@ tableSheet(
     "学校",
     "QS 排名与版本",
     "项目中英文名称",
+    "申请路径",
+    "机会状态",
     "学位与申请季",
     "截止日期",
     "学费",
@@ -100,6 +128,8 @@ tableSheet(
     row.schoolName || "",
     lines([row.qsRank, row.qsEdition].filter(Boolean)),
     lines([row.programNameZh, row.programNameEn].filter(Boolean)),
+    row.applicationPathway || row.application_pathway || "unknown",
+    row.opportunityStatus || row.opportunity_status || "unknown",
     lines([row.degree, row.intake].filter(Boolean)),
     row.deadline || "",
     row.tuition || "",
@@ -109,7 +139,7 @@ tableSheet(
     row.lastVerifiedAt || "",
     lines(row.officialSources),
   ]),
-  [30, 20, 18, 28, 18, 18, 18, 34, 46, 24, 20, 48],
+  [30, 20, 18, 28, 18, 16, 18, 18, 18, 34, 46, 24, 20, 48],
 ),
 tableSheet(
   "3_来源与缺口",

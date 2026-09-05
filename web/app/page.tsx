@@ -123,6 +123,8 @@ type AdvisorProject = {
   season: string;
   degree: string;
   target: string;
+  hardConstraints: string;
+  portfolioStrategy: "balanced" | "conservative" | "ambitious";
   shortlistTarget: number;
   interests: Array<{ name: string; weight: number }>;
   updatedAt: string;
@@ -236,7 +238,14 @@ type AdvisorRanking = {
   name: string;
   school?: string;
   program?: string;
-  totalScore: number;
+  totalScore: number | null;
+  profileMatch?: number | null;
+  overallMatch?: number | null;
+  competitiveness?: "reach" | "match" | "safer" | "unknown";
+  hardConstraintStatus?: "pass" | "fail" | "unknown";
+  applicationPathway?: string;
+  opportunityStatus?: string;
+  recommendedAction?: string;
   rationale?: string;
   evidenceGaps: string[];
 };
@@ -249,6 +258,28 @@ type AdvisorCandidate = {
   school: string;
   program: string;
   fit: number;
+  profileMatch?: number | null;
+  overallMatch?: number | null;
+  competitiveness?: "reach" | "match" | "safer" | "unknown";
+  matchReasons?: string[];
+  hardConstraintStatus?: "pass" | "fail" | "unknown";
+  hardConstraintReasons?: string[];
+  applicationPathway?:
+    | "supervisor_led"
+    | "committee_led"
+    | "advertised_position"
+    | "structured_program"
+    | "unknown";
+  opportunityStatus?: "verified_open" | "signal_only" | "unknown" | "verified_closed";
+  recommendedAction?:
+    | "apply_vacancy"
+    | "contact_supervisor"
+    | "apply_program"
+    | "monitor"
+    | "exclude"
+    | "verify_constraints"
+    | "verify_eligibility"
+    | "verify_pathway";
   status: string;
   statusTone: string;
   feasibility: "eligible" | "ineligible" | "needs_confirmation";
@@ -345,6 +376,25 @@ const runInputFieldLabels: Record<string, string> = {
 
 const hiddenProjectsStorageKey = "advisor-atlas.hidden-project-ids.v1";
 
+const applicationPathwayLabels: Record<string, string> = {
+  supervisor_led: "导师主导",
+  committee_led: "委员会录取",
+  advertised_position: "公开岗位",
+  structured_program: "结构化项目",
+  unknown: "路径待核实",
+};
+
+const recommendedActionLabels: Record<string, string> = {
+  apply_vacancy: "按岗位申请",
+  contact_supervisor: "先联系导师",
+  apply_program: "申请项目",
+  monitor: "继续监测",
+  exclude: "排除",
+  verify_constraints: "先核实硬条件",
+  verify_eligibility: "先核实申请资格",
+  verify_pathway: "核实申请路径",
+};
+
 function Sparkline() {
   return (
     <div className="sparkline" aria-label="候选导师匹配分趋势">
@@ -367,6 +417,7 @@ export default function Home() {
   const [runtimeHealth, setRuntimeHealth] = useState<RuntimeHealth | null>(null);
   const [runtimeError, setRuntimeError] = useState("");
   const [runtimeLoading, setRuntimeLoading] = useState(true);
+  const [runtimeRefreshing, setRuntimeRefreshing] = useState(false);
   const [projects, setProjects] = useState<AdvisorProject[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [projectsRoot, setProjectsRoot] = useState("");
@@ -390,6 +441,8 @@ export default function Home() {
     season: string;
     degree: string;
     target: string;
+    hardConstraints: string;
+    portfolioStrategy: "balanced" | "conservative" | "ambitious";
     shortlistTarget: string;
     interests: Array<{ name: string; weight: string }>;
   }>({
@@ -397,6 +450,8 @@ export default function Home() {
     season: "",
     degree: "",
     target: "",
+    hardConstraints: "",
+    portfolioStrategy: "balanced",
     shortlistTarget: "10",
     interests: [{ name: "", weight: "" }],
   });
@@ -492,6 +547,25 @@ export default function Home() {
       });
     } finally {
       setProjectsLoading(false);
+    }
+  }
+
+  async function refreshRuntimeStatus(notify = false) {
+    setRuntimeRefreshing(true);
+    try {
+      const response = await fetch(`${runtimeUrl}/api/health`, { cache: "no-store" });
+      if (!response.ok) throw new Error("本地运行服务未响应");
+      const payload = (await response.json()) as RuntimeHealth;
+      setRuntimeHealth(payload);
+      setRuntimeError("");
+      if (notify) showNotice("模型连接状态已刷新");
+    } catch {
+      setRuntimeHealth(null);
+      setRuntimeError("本地运行服务未启动");
+      if (notify) showNotice("刷新失败：本地运行服务未启动");
+    } finally {
+      setRuntimeLoading(false);
+      setRuntimeRefreshing(false);
     }
   }
 
@@ -835,22 +909,32 @@ export default function Home() {
     if (!activeProject) return;
     // Saving a draft replaces the project object, so this effect would re-run on
     // every checkbox click and reset the panels the user is still working in.
-    // Local editing state only needs to be re-seeded when the project changes.
-    if (syncedProjectIdRef.current === activeProject.id) return;
+    // Investigation/material choices only re-seed on a project switch. Profile
+    // and CV state may also change after an upload or Agent run, so refresh them
+    // whenever there is no unsaved form edit.
+    const projectChanged = syncedProjectIdRef.current !== activeProject.id;
+    if (projectChanged || !intakeDirty) {
+      setApplicationDraft({
+        applicantName: activeProject.applicantName || "",
+        season: activeProject.season || "",
+        degree: activeProject.degree || "",
+        target: activeProject.target || "",
+        hardConstraints: activeProject.hardConstraints || "",
+        portfolioStrategy: activeProject.portfolioStrategy || "balanced",
+        shortlistTarget: String(activeProject.shortlistTarget || 10),
+        interests: activeProject.interests?.length
+          ? activeProject.interests.map((interest) => ({
+              name: interest.name,
+              weight: String(interest.weight),
+            }))
+          : [{ name: "", weight: "" }],
+      });
+    }
+    setFileName(activeProject.cv?.name || "尚未上传真实 CV");
+    setFilePath(activeProject.cv?.valid ? activeProject.cv.absolutePath || "" : "");
+    setUploadState(activeProject.cv?.valid ? "ready" : activeProject.cv?.path ? "failed" : "idle");
+    if (!projectChanged) return;
     syncedProjectIdRef.current = activeProject.id;
-    setApplicationDraft({
-      applicantName: activeProject.applicantName || "",
-      season: activeProject.season || "",
-      degree: activeProject.degree || "",
-      target: activeProject.target || "",
-      shortlistTarget: String(activeProject.shortlistTarget || 10),
-      interests: activeProject.interests?.length
-        ? activeProject.interests.map((interest) => ({
-            name: interest.name,
-            weight: String(interest.weight),
-          }))
-        : [{ name: "", weight: "" }],
-    });
     setSelected(
       new Set(activeProject.investigation?.draft?.selectedAdvisorProgramIds || []),
     );
@@ -860,9 +944,6 @@ export default function Home() {
     setCommunityConsent(
       Boolean(activeProject.investigation?.draft?.communitySources?.requested),
     );
-    setFileName(activeProject.cv?.name || "尚未上传真实 CV");
-    setFilePath(activeProject.cv?.valid ? activeProject.cv.absolutePath || "" : "");
-    setUploadState(activeProject.cv?.valid ? "ready" : activeProject.cv?.path ? "failed" : "idle");
     setIntakeDirty(false);
     setEvidenceConfigOpen(!activeProject.detectiveResults?.results.length);
     setInvestigationConfirmOpen(false);
@@ -879,7 +960,7 @@ export default function Home() {
         : "research_proposal_first",
     );
     setMaterialsConfirmOpen(false);
-  }, [activeProjectId, activeProject]);
+  }, [activeProjectId, activeProject, intakeDirty]);
 
   useEffect(() => {
     if (!activeProjectId) return;
@@ -1073,8 +1154,17 @@ export default function Home() {
       "招生状态",
       "客观可行性",
       "客观条件说明",
+      "硬条件状态",
+      "硬条件说明",
+      "申请路径",
+      "机会状态",
+      "下一步",
+      "申请定位",
+      "履历匹配分",
+      "综合匹配分",
+      "综合匹配依据",
       "证据数",
-      "匹配分",
+      "研究匹配分",
     ];
     const rows = candidates.map((candidate) => [
       candidate.rank,
@@ -1085,6 +1175,15 @@ export default function Home() {
       candidate.status,
       candidate.feasibility,
       candidate.feasibilityReasons.join("；"),
+      candidate.hardConstraintStatus || "unknown",
+      candidate.hardConstraintReasons?.join("；") || "",
+      candidate.applicationPathway || "unknown",
+      candidate.opportunityStatus || "unknown",
+      candidate.recommendedAction || "verify_pathway",
+      candidate.competitiveness || "unknown",
+      candidate.profileMatch ?? "",
+      candidate.overallMatch ?? "",
+      candidate.matchReasons?.join("；") || "",
       candidate.evidence,
       candidate.fit,
     ]);
@@ -1210,7 +1309,13 @@ export default function Home() {
   }
 
   function updateApplicationField(
-    field: "applicantName" | "season" | "degree" | "target",
+    field:
+      | "applicantName"
+      | "season"
+      | "degree"
+      | "target"
+      | "hardConstraints"
+      | "portfolioStrategy",
     value: string,
   ) {
     setIntakeDirty(true);
@@ -1229,6 +1334,8 @@ export default function Home() {
           season: applicationDraft.season,
           degree: applicationDraft.degree,
           target: applicationDraft.target,
+          hardConstraints: applicationDraft.hardConstraints,
+          portfolioStrategy: applicationDraft.portfolioStrategy,
           shortlistTarget: Number(applicationDraft.shortlistTarget) || 10,
           interests: applicationDraft.interests.map((interest) => ({
             name: interest.name,
@@ -1253,6 +1360,14 @@ export default function Home() {
   }
 
   function startPhaseOne() {
+    if (intakeDirty) {
+      setView("overview");
+      showNotice("请先保存刚刚修改的申请资料，再重新匹配");
+      window.requestAnimationFrame(() => {
+        intakeRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return;
+    }
     if (!modeReadiness("finder").ready) {
       focusApplicationInput();
       return;
@@ -1991,14 +2106,18 @@ export default function Home() {
     }
   }
 
-  function selectProject(projectId: string) {
+  function latestProjectView(project: AdvisorProject): View {
+    if (project.rankings?.length) return "ranking";
+    if (project.detectiveResults?.results?.length) return "evidence";
+    if (project.candidates?.length) return "candidates";
+    return "overview";
+  }
+
+  function selectProject(projectId: string, nextView: View = "overview") {
     setProjectMenuId("");
     setActiveProjectId(projectId);
-    setFileName("尚未上传真实 CV");
-    setFilePath("");
-    setUploadState("idle");
-    setSelected(new Set());
-    setView("overview");
+    setView(nextView);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function hideProject(project: AdvisorProject) {
@@ -2145,7 +2264,7 @@ export default function Home() {
                 <div className="project-row" key={item.id}>
                   <button
                     className={`project-link ${item.id === activeProjectId ? "" : "subdued"}`}
-                    onClick={() => selectProject(item.id)}
+                    onClick={() => selectProject(item.id, latestProjectView(item))}
                     title={item.name}
                   >
                     <span
@@ -2153,7 +2272,18 @@ export default function Home() {
                         item.id === activeProjectId ? "violet" : "mint"
                       }`}
                     />
-                    <span className="project-name">{item.name}</span>
+                    <span className="project-label">
+                      <span className="project-name">{item.name}</span>
+                      <small>
+                        {item.rankings.length
+                          ? `${item.rankings.length} 位排名 · 点击查看`
+                          : item.detectiveResults?.results.length
+                            ? `${item.detectiveResults.results.length} 位背调 · 点击查看`
+                            : item.candidates.length
+                              ? `${item.candidates.length} 位候选 · 点击查看`
+                              : "尚未产生结果"}
+                      </small>
+                    </span>
                   </button>
                   <button
                     className="project-menu-button"
@@ -2571,14 +2701,40 @@ export default function Home() {
                     onChange={(event) =>
                       updateApplicationField("target", event.target.value)
                     }
-                    placeholder="例如：美国 Top 30，优先 HCI / AI；也考虑加拿大多伦多地区"
+                    placeholder="例如：欧洲 QS 100–300 为主，优先 HCI / AI；排除美国；少量冲刺即可"
                     rows={2}
                   />
                   <small>越具体越好，可填写国家、学校层级、院系或明确学校名单</small>
                 </label>
+                <label>
+                  <span>6. 必须满足的硬条件 <em>可选，但会先于评分执行</em></span>
+                  <textarea
+                    value={applicationDraft.hardConstraints}
+                    onChange={(event) =>
+                      updateApplicationField("hardConstraints", event.target.value)
+                    }
+                    placeholder="例如：仅欧洲；QS 100–300；排除美国；必须全奖或带薪岗位"
+                    rows={2}
+                  />
+                  <small>不满足的候选会被排除；无法从官方来源判断时会标为“待核实”，不会假装满足</small>
+                </label>
+                <label>
+                  <span>7. 申请组合策略 <em>用于控制冲刺比例</em></span>
+                  <select
+                    value={applicationDraft.portfolioStrategy}
+                    onChange={(event) =>
+                      updateApplicationField("portfolioStrategy", event.target.value)
+                    }
+                  >
+                    <option value="balanced">均衡：少量冲刺，以主申和相对稳妥为主</option>
+                    <option value="conservative">稳妥优先：尽量减少高门槛项目</option>
+                    <option value="ambitious">冲刺优先：允许更多高门槛项目</option>
+                  </select>
+                  <small>只用于组合规划，不代表录取概率；系统仍会分别展示研究匹配与申请现实度</small>
+                </label>
                 <div className="interest-editor">
                   <div className="interest-editor-title">
-                    <span>6. 研究兴趣与权重 <em>可选</em></span>
+                    <span>8. 研究兴趣与权重 <em>可选</em></span>
                     <small className={hasDraftInterests ? "valid" : ""}>
                       {!hasDraftInterests
                         ? "可留空"
@@ -2645,7 +2801,7 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="shortlist-field">
-                  <span>7. Phase 1 希望保留的导师数</span>
+                  <span>9. Phase 1 希望保留的导师数</span>
                   <div className="shortlist-control">
                     {[5, 10, 15, 20].map((count) => (
                       <button
@@ -2729,6 +2885,11 @@ export default function Home() {
                 <p>先看研究匹配和客观申请可行性，再选择值得深度背调的导师</p>
               </div>
               <div className="candidate-actions">
+                {candidates.length > 0 && (
+                  <button className="secondary-button rematch-button" onClick={startPhaseOne}>
+                    重新匹配
+                  </button>
+                )}
                 <label className="search-box">
                   <span>⌕</span>
                   <input
@@ -2760,14 +2921,19 @@ export default function Home() {
                     <th scope="col">研究方向</th>
                     <th scope="col">招生状态</th>
                     <th scope="col">客观可行性</th>
+                    <th scope="col">硬条件</th>
+                    <th scope="col">申请路径 / 下一步</th>
                     <th scope="col">证据</th>
-                    <th scope="col">匹配分</th>
+                    <th scope="col">申请定位</th>
+                    <th scope="col">研究匹配</th>
+                    <th scope="col">履历匹配</th>
+                    <th scope="col">综合匹配</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 ? (
                     <tr>
-                      <td colSpan={8}>
+                      <td colSpan={13}>
                         <div className="empty-candidates">
                           <span>00</span>
                           <strong>还没有真实候选导师</strong>
@@ -2834,7 +3000,40 @@ export default function Home() {
                         )}
                       </td>
                       <td>
+                        <span
+                          className={`constraint-badge ${candidate.hardConstraintStatus || "unknown"}`}
+                          title={candidate.hardConstraintReasons?.join("；") || "尚无硬条件核验说明"}
+                        >
+                          {candidate.hardConstraintStatus === "pass"
+                            ? "满足"
+                            : candidate.hardConstraintStatus === "fail"
+                              ? "不满足"
+                              : "待核实"}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="pathway-action">
+                          <strong>
+                            {applicationPathwayLabels[candidate.applicationPathway || "unknown"]}
+                          </strong>
+                          <small>
+                            {recommendedActionLabels[candidate.recommendedAction || "verify_pathway"]}
+                          </small>
+                        </div>
+                      </td>
+                      <td>
                         <span className="evidence-count">{candidate.evidence} 条</span>
+                      </td>
+                      <td>
+                        <span className={`competitiveness-badge ${candidate.competitiveness || "unknown"}`}>
+                          {candidate.competitiveness === "reach"
+                            ? "冲刺"
+                            : candidate.competitiveness === "match"
+                              ? "主申"
+                              : candidate.competitiveness === "safer"
+                                ? "相对稳妥"
+                                : "待判断"}
+                        </span>
                       </td>
                       <td>
                         <div className="fit-score">
@@ -2842,6 +3041,22 @@ export default function Home() {
                           <span>
                             <i style={{ width: `${candidate.fit * 10}%` }} />
                           </span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="fit-score" title="基于 CV 中的方法、论文、项目与可迁移能力">
+                          <strong>{candidate.profileMatch ?? "—"}</strong>
+                          {candidate.profileMatch != null && (
+                            <span><i style={{ width: `${candidate.profileMatch * 10}%` }} /></span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="fit-score overall-score" title={candidate.matchReasons?.join("；") || "等待基于 CV 的综合判断"}>
+                          <strong>{candidate.overallMatch ?? "—"}</strong>
+                          {candidate.overallMatch != null && (
+                            <span><i style={{ width: `${candidate.overallMatch * 10}%` }} /></span>
+                          )}
                         </div>
                       </td>
                       </tr>
@@ -3197,7 +3412,17 @@ export default function Home() {
                           <h2>{item.name}</h2>
                           <p>{[item.school, item.program].filter(Boolean).join(" · ")}</p>
                         </div>
-                        <strong>{item.totalScore.toFixed(1)}</strong>
+                        <strong>{item.totalScore != null ? item.totalScore.toFixed(1) : "—"}</strong>
+                      </div>
+                      <div className="ranking-decision-factors">
+                        <span className={`constraint-badge ${item.hardConstraintStatus || "unknown"}`}>
+                          硬条件：{item.hardConstraintStatus === "pass" ? "满足" : item.hardConstraintStatus === "fail" ? "不满足" : "待核实"}
+                        </span>
+                        <span className={`competitiveness-badge ${item.competitiveness || "unknown"}`}>
+                          {item.competitiveness === "reach" ? "冲刺" : item.competitiveness === "match" ? "主申" : item.competitiveness === "safer" ? "相对稳妥" : "定位待判断"}
+                        </span>
+                        <span>{applicationPathwayLabels[item.applicationPathway || "unknown"] || "路径待核实"}</span>
+                        <strong>{recommendedActionLabels[item.recommendedAction || "verify_pathway"] || "核实申请路径"}</strong>
                       </div>
                       {item.rationale && <p className="ranking-rationale">{item.rationale}</p>}
                       {visibleGaps.length > 0 && (
@@ -3522,6 +3747,7 @@ export default function Home() {
             onClick={closeRunner}
           />
           <aside className="runner-drawer">
+            <div className="runner-scroll-body">
             <header className="runner-header">
               <div>
                 <span className="section-kicker">{runnerContent.kicker}</span>
@@ -3537,19 +3763,13 @@ export default function Home() {
               <div className="runner-section-title">
                 <strong>选择模型</strong>
                 <button
-                  onClick={async () => {
-                    try {
-                      const response = await fetch(`${runtimeUrl}/api/health`, {
-                        cache: "no-store",
-                      });
-                      setRuntimeHealth(await response.json());
-                      setRuntimeError("");
-                    } catch {
-                      setRuntimeError("本地运行服务未启动");
-                    }
-                  }}
+                  className={`runtime-refresh-button ${runtimeRefreshing ? "refreshing" : ""}`}
+                  disabled={runtimeRefreshing}
+                  aria-busy={runtimeRefreshing}
+                  onClick={() => void refreshRuntimeStatus(true)}
                 >
-                  刷新状态
+                  <span aria-hidden="true">↻</span>
+                  {runtimeRefreshing ? "正在刷新…" : "刷新状态"}
                 </button>
               </div>
               <div className="runner-providers">
@@ -3979,6 +4199,7 @@ export default function Home() {
                 </div>
               )}
             </section>
+            </div>
 
             <footer className="runner-footer">
               <span>{currentProviderHealth?.loggedIn ? `将使用 ${provider}` : "请选择可用模型"}</span>

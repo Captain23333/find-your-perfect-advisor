@@ -11,6 +11,8 @@ import { buildRunPrompt, MODE_SKILLS } from "../local-runtime/run-prompt.mjs";
 const project = {
   path: "/tmp/advisor-project",
   shortlistTarget: 10,
+  portfolioStrategy: "balanced",
+  hardConstraints: "仅欧洲；必须全奖",
   investigation: {
     confirmed: {
       selectedAdvisorProgramIds: ["ap-1"],
@@ -104,6 +106,12 @@ test("finder receives discovery constraints but no later-phase payloads", () => 
   const value = prompt("finder");
   assert.match(value, /真实 CV/);
   assert.match(value, /shortlist 数量为 10/);
+  assert.match(value, /申请组合策略为 balanced/);
+  assert.match(value, /仅欧洲；必须全奖/);
+  assert.match(value, /reach \/ match \/ safer/);
+  assert.match(value, /overallMatch/);
+  assert.match(value, /apply_matching_strategy\.mjs/);
+  assert.match(value, /applicationPathway/);
   assert.match(value, /candidates\.json/);
   assert.match(value, /input\.requested/);
   assert.match(value, /字段 cv/);
@@ -122,7 +130,8 @@ test("detective receives only its confirmation and evidence boundary", () => {
 
 test("ranking avoids discovery and application-material instructions", () => {
   const value = prompt("ranking");
-  assert.match(value, /研究匹配、客观可行性和导师适合度/);
+  assert.match(value, /研究匹配、履历匹配、硬条件、申请路径、机会证据、客观可行性和导师适合度/);
+  assert.match(value, /matching-audit\.json/);
   assert.match(value, /outputs\/ranking\.json/);
   assert.doesNotMatch(value, /detective-fingerprint|material-fingerprint/);
   assert.doesNotMatch(value, /candidates 每行|outreach-email\.txt/);

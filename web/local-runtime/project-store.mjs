@@ -9,12 +9,17 @@ import {
   confirmInvestigationDraft,
   createStatus,
   hasCommunitySections,
+  normalizeApplicationPathway,
+  normalizeHardConstraintStatus,
   normalizeInterests,
+  normalizeOpportunityStatus,
+  normalizePortfolioStrategy,
   normalizeApplicationMaterials,
   normalizeInvestigation,
   normalizeProjectMetadata,
   normalizeShortlistTarget,
   normalizeStatus,
+  recommendedActionForCandidate,
   readinessForProject,
   updateInvestigationDraft,
   updateApplicationMaterialsDraft,
@@ -32,8 +37,10 @@ const defaultProjectInput = {
   season: "",
   degree: "",
   target: "",
+  hardConstraints: "",
   interests: [],
   shortlistTarget: 10,
+  portfolioStrategy: "balanced",
 };
 
 export const CV_ALLOWED_EXTENSIONS = new Set([".pdf", ".doc", ".docx", ".txt", ".md"]);
@@ -141,7 +148,16 @@ export function createProjectStore(projectRoot) {
         await readFile(resolve(target, "outputs", "candidates.json"), "utf8"),
       );
       if (!Array.isArray(parsed)) return [];
-      return parsed.map((candidate, index) => ({
+      return parsed.map((candidate, index) => {
+        const matching = {
+          hardConstraintStatus: normalizeHardConstraintStatus(candidate?.hardConstraintStatus),
+          hardConstraintReasons: Array.isArray(candidate?.hardConstraintReasons)
+            ? candidate.hardConstraintReasons.map(String)
+            : [],
+          applicationPathway: normalizeApplicationPathway(candidate?.applicationPathway),
+          opportunityStatus: normalizeOpportunityStatus(candidate?.opportunityStatus),
+        };
+        return {
         ...candidate,
         advisorProgramId:
           String(candidate?.advisorProgramId || "").trim() ||
@@ -154,6 +170,24 @@ export function createProjectStore(projectRoot) {
         initials: String(candidate?.initials || ""),
         rank: Number(candidate?.rank || index + 1),
         fit: Number(candidate?.fit || 0),
+        overallMatch:
+          candidate?.overallMatch != null && Number.isFinite(Number(candidate.overallMatch))
+          ? Math.max(0, Math.min(10, Number(candidate.overallMatch)))
+          : null,
+        profileMatch:
+          candidate?.profileMatch != null && Number.isFinite(Number(candidate.profileMatch))
+          ? Math.max(0, Math.min(10, Number(candidate.profileMatch)))
+          : null,
+        competitiveness: ["reach", "match", "safer", "unknown"].includes(
+          String(candidate?.competitiveness),
+        )
+          ? String(candidate.competitiveness)
+          : "unknown",
+        matchReasons: Array.isArray(candidate?.matchReasons)
+          ? candidate.matchReasons.map(String)
+          : [],
+        ...matching,
+        recommendedAction: recommendedActionForCandidate({ ...candidate, ...matching }),
         status: String(candidate?.status || "待核实"),
         statusTone: String(candidate?.statusTone || "unknown"),
         directions: Array.isArray(candidate?.directions)
@@ -164,7 +198,8 @@ export function createProjectStore(projectRoot) {
         feasibilityReasons: Array.isArray(candidate?.feasibilityReasons)
           ? candidate.feasibilityReasons.map(String)
           : [],
-      }));
+        };
+      });
     } catch {
       return [];
     }
@@ -197,9 +232,10 @@ export function createProjectStore(projectRoot) {
 
   async function readRankings(target) {
     try {
-      const parsed = JSON.parse(
-        await readFile(resolve(target, "outputs", "ranking.json"), "utf8"),
-      );
+      const [parsed, candidates] = await Promise.all([
+        readFile(resolve(target, "outputs", "ranking.json"), "utf8").then(JSON.parse),
+        readCandidates(target),
+      ]);
       const rankings = Array.isArray(parsed)
         ? parsed
         : Array.isArray(parsed?.rankings)
@@ -207,14 +243,32 @@ export function createProjectStore(projectRoot) {
           : Array.isArray(parsed?.ranking)
             ? parsed.ranking
             : [];
-      return rankings.map((item, index) => ({
-        ...item,
+      const candidatesById = new Map(
+        candidates.map((candidate) => [candidate.advisorProgramId, candidate]),
+      );
+      return rankings.map((item, index) => {
+        const inherited = candidatesById.get(String(item?.advisorProgramId || "")) || {};
+        const combined = { ...inherited, ...item };
+        const matching = {
+          hardConstraintStatus: normalizeHardConstraintStatus(combined.hardConstraintStatus),
+          applicationPathway: normalizeApplicationPathway(combined.applicationPathway),
+          opportunityStatus: normalizeOpportunityStatus(combined.opportunityStatus),
+        };
+        const rawTotal = combined.totalScore ?? combined.score;
+        return {
+        ...combined,
         rank: Number(item?.rank || index + 1),
-        totalScore: Number(item?.totalScore ?? item?.score ?? 0),
+        totalScore:
+          rawTotal !== null && rawTotal !== undefined && rawTotal !== "" && Number.isFinite(Number(rawTotal))
+            ? Number(rawTotal)
+            : null,
+        ...matching,
+        recommendedAction: recommendedActionForCandidate({ ...combined, ...matching }),
         evidenceGaps: Array.isArray(item?.evidenceGaps)
           ? item.evidenceGaps.map(String)
           : [],
-      }));
+        };
+      });
     } catch {
       return [];
     }
@@ -233,8 +287,19 @@ export function createProjectStore(projectRoot) {
     const raw = String(cv?.path || "");
     if (!raw) return null;
     const absolute = resolve(target, raw);
-    if (absolute !== target && !absolute.startsWith(`${target}${sep}`)) return null;
-    return absolute;
+    if (absolute !== target && absolute.startsWith(`${target}${sep}`)) return absolute;
+
+    // Older project copies stored an absolute checkout path. If the whole
+    // project folder moved, recover only that path's basename inside this
+    // project's own inputs/ directory. Uploaded files carry a UUID prefix, so
+    // the stored path basename legitimately differs from the user-facing
+    // `cv.name`. This never follows the stale outside path and keeps
+    // ZIP/worktree moves portable.
+    const storedName = basename(raw);
+    if (storedName && CV_ALLOWED_EXTENSIONS.has(cvExtension(storedName))) {
+      return resolve(target, "inputs", storedName);
+    }
+    return null;
   }
 
   async function inspectCv(target, cv) {
@@ -403,8 +468,10 @@ export function createProjectStore(projectRoot) {
       season: String(input.season || "").trim(),
       degree: String(input.degree || "").trim(),
       target: String(input.target || "").trim(),
+      hardConstraints: String(input.hardConstraints || "").trim(),
       interests: normalizeInterests(input.interests),
       shortlistTarget: normalizeShortlistTarget(input.shortlistTarget),
+      portfolioStrategy: normalizePortfolioStrategy(input.portfolioStrategy),
       cv: null,
       investigation: normalizeInvestigation(input.investigation),
       createdAt: now,
@@ -496,10 +563,18 @@ export function createProjectStore(projectRoot) {
         input.target === undefined
           ? metadata.target
           : String(input.target || "").trim().slice(0, 500),
+      hardConstraints:
+        input.hardConstraints === undefined
+          ? metadata.hardConstraints
+          : String(input.hardConstraints || "").trim().slice(0, 1000),
       shortlistTarget:
         input.shortlistTarget === undefined
           ? metadata.shortlistTarget
           : normalizeShortlistTarget(input.shortlistTarget, metadata.shortlistTarget),
+      portfolioStrategy:
+        input.portfolioStrategy === undefined
+          ? metadata.portfolioStrategy
+          : normalizePortfolioStrategy(input.portfolioStrategy, metadata.portfolioStrategy),
       interests:
         input.interests === undefined
           ? metadata.interests

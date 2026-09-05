@@ -36,7 +36,8 @@ test("project store persists exact investigation configuration", async () => {
     );
     assert.deepEqual(project.investigation.draft.selectedAdvisorProgramIds, []);
     assert.equal(project.investigation.confirmed, null);
-    assert.equal(project.schemaVersion, 6);
+    assert.equal(project.schemaVersion, 8);
+    assert.equal(project.portfolioStrategy, "balanced");
     assert.equal(project.readiness.phase1Ready, false);
 
     await writeFile(
@@ -46,6 +47,8 @@ test("project store persists exact investigation configuration", async () => {
           advisorProgramId: "advisor-program-1",
           name: "Test Advisor",
           program: "PhD in HCI",
+          profileMatch: null,
+          overallMatch: 12,
         },
       ]),
     );
@@ -60,6 +63,7 @@ test("project store persists exact investigation configuration", async () => {
     });
     const updated = await store.updateProject("test-project", {
       target: "US HCI programs",
+      portfolioStrategy: "conservative",
       shortlistTarget: 15,
       interests: [{ name: "Human-AI Interaction", weight: 0 }],
       investigation: {
@@ -80,6 +84,9 @@ test("project store persists exact investigation configuration", async () => {
     assert.equal(updated.investigation.confirmed, null);
     assert.equal(communityRefreshEligibility(updated.investigation).allowed, false);
     assert.equal(updated.shortlistTarget, 15);
+    assert.equal(updated.portfolioStrategy, "conservative");
+    assert.equal(updated.candidates[0].profileMatch, null);
+    assert.equal(updated.candidates[0].overallMatch, 10);
     assert.equal(updated.interests[0].weight, 100);
     assert.equal(updated.readiness.phase1Ready, true);
     assert.equal(updated.readiness.objectiveReady, false);

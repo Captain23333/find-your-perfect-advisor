@@ -168,8 +168,39 @@ test("finder is only complete with a real candidate array and stable ids", async
 
     await writeFile(
       resolve(outputs, "candidates.json"),
-      JSON.stringify([{ advisorProgramId: "ap-1", name: "Real Advisor" }]),
+      JSON.stringify([{
+        advisorProgramId: "ap-1",
+        name: "Real Advisor",
+        fit: 8,
+        profileMatch: 8.5,
+        overallMatch: 8.2,
+        competitiveness: "match",
+        hardConstraintStatus: "pass",
+        applicationPathway: "committee_led",
+        opportunityStatus: "signal_only",
+        recommendedAction: "apply_program",
+        feasibility: "eligible",
+        matchingContractVersion: 2,
+      }]),
     );
+    await writeFile(
+      resolve(outputs, "matching-audit.json"),
+      JSON.stringify({ matchingContractVersion: 2, selectedCount: 1, reachCount: 0 }),
+    );
+    const validCandidates = JSON.parse(
+      await readFile(resolve(outputs, "candidates.json"), "utf8"),
+    );
+    await writeFile(
+      resolve(outputs, "candidates.json"),
+      JSON.stringify([{ ...validCandidates[0], overallMatch: 9.9 }]),
+    );
+    const inconsistentMatching = await verifyRunArtifacts({
+      projectPath: project.path,
+      mode: "finder",
+    });
+    assert.equal(inconsistentMatching.complete, false);
+    assert.match(inconsistentMatching.missing.join(" "), /综合分或下一步/);
+    await writeFile(resolve(outputs, "candidates.json"), JSON.stringify(validCandidates));
     const missingWorkbook = await verifyRunArtifacts({
       projectPath: project.path,
       mode: "finder",
@@ -348,7 +379,18 @@ test("ranking needs a sortable result, not just valid JSON", async () => {
 
     await writeFile(
       resolve(outputs, "ranking.json"),
-      JSON.stringify({ rankings: [{ advisorProgramId: "ap-1", rank: 1, totalScore: 8.4 }] }),
+      JSON.stringify({ rankings: [{
+        advisorProgramId: "ap-1",
+        rank: 1,
+        totalScore: 8.4,
+        profileMatch: 8,
+        overallMatch: 8.2,
+        competitiveness: "match",
+        hardConstraintStatus: "pass",
+        applicationPathway: "committee_led",
+        opportunityStatus: "signal_only",
+        recommendedAction: "apply_program",
+      }] }),
     );
     const noWorkbook = await verifyRunArtifacts({
       projectPath: project.path,

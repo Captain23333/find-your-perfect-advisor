@@ -33,18 +33,27 @@ Use these columns:
 17. 导师官网链接
 18. 导师招生与联系要求
 19. 研究匹配分
-20. 客观申请可行性
-21. 背调结论
-22. 风险与信息缺口
-23. 最后核实日期
-24. 关键官方来源
+20. 履历匹配分
+21. 综合匹配分
+22. 申请定位
+23. 硬条件状态
+24. 硬条件依据
+25. 申请路径
+26. 机会状态
+27. 建议下一步
+28. 客观申请可行性
+29. 背调结论
+30. 风险与信息缺口
+31. 最后核实日期
+32. 关键官方来源
 
 Use multiline cells for application materials, scholarships, advisor
 requirements, research, backcheck findings, and gaps.
 
 ## Other sheets
 
-- `2_研究匹配与选择`: research scores, fit evidence, and user selections.
+- `2_研究匹配与选择`: research/profile/overall scores, hard conditions,
+  pathway, opportunity, action, fit evidence, and user selections.
 - `3_背调证据`: selected section, finding, evidence strength, conflict state,
   URL, and access date.
 - `4_申请来源与时效`: field-level official sources, dates, and stale/missing
@@ -55,6 +64,10 @@ requirements, research, backcheck findings, and gaps.
 ## Scoring
 
 - Keep research fit numeric and auditable.
+- Keep unknown scores blank; do not coerce them to zero.
+- Hard failures, objective ineligibility, and verified-closed opportunities are
+  excluded before any score. Unknown hard conditions remain pending.
+- Treat `reach`/`match`/`safer` as portfolio labels, not admission probability.
 - Keep objective feasibility categorical and show failure reasons.
 - Score only Detective dimensions that the user selected consistently for the
   compared advisors.

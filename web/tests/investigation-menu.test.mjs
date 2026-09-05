@@ -36,7 +36,19 @@ test("the CLI menu always renders the stable advisorProgramId column", async () 
   const root = await menuFixture(
     [
       { advisorProgramId: "ap-1", name: "Alice Chen", school: "MIT", program: "PhD EECS" },
-      { advisorProgramId: "ap-2", name: "Bob Liu", school: "CMU", program: "PhD HCI" },
+      {
+        advisorProgramId: "ap-2",
+        name: "Bob Liu",
+        school: "CMU",
+        program: "PhD HCI",
+        fit: 8.5,
+        profileMatch: 7.5,
+        overallMatch: 8,
+        competitiveness: "match",
+        hardConstraintStatus: "pass",
+        applicationPathway: "committee_led",
+        recommendedAction: "apply_program",
+      },
     ],
     {
       draft: {
@@ -56,6 +68,9 @@ test("the CLI menu always renders the stable advisorProgramId column", async () 
     // Candidate order follows candidates.json, not the model's preference.
     assert.ok(rendered.indexOf("`ap-1`") < rendered.indexOf("`ap-2`"));
     assert.equal(menu.candidates[0].advisorProgramId, "ap-1");
+    assert.match(rendered, /履历匹配/);
+    assert.match(rendered, /committee_led/);
+    assert.match(rendered, /apply_program/);
 
     // All 11 dimensions, canonical order, three defaults.
     assert.deepEqual(

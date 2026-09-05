@@ -19,6 +19,8 @@ Read:
 - `outputs/advisor_records.json`
 - `outputs/program_records.json`
 - `outputs/evidence.json`
+- `outputs/candidates.json`
+- `outputs/matching-audit.json`
 - `project.json`
 
 If present, read `../advisor-pipeline/references/core-data-contract.md`. Read
@@ -39,12 +41,19 @@ Check:
 
 ## Decision model
 
-Show three separate layers:
+Show seven separate layers:
 
 1. **Research fit**: numeric, formula-driven, and sourced from Finder.
-2. **Objective feasibility**: `eligible`, `ineligible`, or
+2. **Profile match**: applicant-relative methods, work, prerequisites, and
+   transferable skills from the real CV.
+3. **Hard constraints**: `pass`, `fail`, or `unknown`; unknown is not pass.
+4. **Application pathway**: supervisor-led, committee-led, advertised
+   position, structured program, or unknown.
+5. **Opportunity evidence**: verified open, signal only, unknown, or verified
+   closed.
+6. **Objective feasibility**: `eligible`, `ineligible`, or
    `needs_confirmation`, with explicit reasons.
-3. **Advisor suitability**: selected-section findings, supported risks, and
+7. **Advisor suitability**: selected-section findings, supported risks, and
    confidence.
 
 Ask for optional weights only for numeric selected dimensions. Normalize weights
@@ -59,7 +68,10 @@ separately even when an overall numeric result is high.
 Recommend application priority using transparent rules:
 
 - Do not recommend an objectively ineligible row as a primary application.
+- Exclude a verified hard-condition failure or verified-closed opportunity.
 - Keep unresolved feasibility visible instead of silently filtering it.
+- Route the next action using the official application pathway; a missing
+  faculty reply is not a rejection for committee-led or structured programs.
 - Prefer strong research fit when eligibility is comparable.
 - Surface verified severe risks before total scores.
 - Explain the recommendation in plain language and list the next verification
@@ -79,8 +91,10 @@ Include:
   scholarships, materials, and RP requirement.
 - Advisor research/papers, email, homepage, and multiline recruiting/contact
   requirements.
-- Research fit, objective feasibility, selected backcheck result, supported
-  risks, gaps, official sources, and last verified date.
+- Research fit, profile match, overall match, competitiveness, hard-condition
+  status/reasons, application pathway, opportunity status, recommended action,
+  objective feasibility, selected backcheck result, supported risks, gaps,
+  official sources, and last verified date.
 
 Use separate sheets for fit, evidence, sources/freshness, and configuration.
 

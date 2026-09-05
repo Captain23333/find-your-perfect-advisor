@@ -1,6 +1,6 @@
 # Advisor Atlas data-contract router
 
-Advisor Atlas uses `project.json` schemaVersion 6; `status.json` and researched
+Advisor Atlas uses `project.json` schemaVersion 8; `status.json` and researched
 output records remain version 2. Structured JSON is authoritative and Markdown
 state files are compact resumable summaries.
 

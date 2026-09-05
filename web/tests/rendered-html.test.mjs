@@ -41,6 +41,8 @@ test("server-renders the advisor console", async () => {
     assert.match(html, /生成最终排名与 Excel/);
   assert.match(html, /Phase 1 希望保留的导师数/);
   assert.match(html, /研究兴趣与权重/);
+  assert.match(html, /申请组合策略/);
+  assert.match(html, /用于控制冲刺比例/);
   assert.match(html, /可选/);
   assert.match(html, /选择需要调查的信息/);
   assert.match(html, /前三项是默认背调起点/);

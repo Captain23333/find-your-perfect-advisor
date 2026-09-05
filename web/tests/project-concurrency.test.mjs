@@ -144,7 +144,7 @@ test("a CV whose file disappeared stops counting as a matching signal", async ()
   const { root, store } = await scratchStore("cv");
   try {
     const project = await store.createProject({ name: "T", slug: "cv-project" });
-    const cvPath = resolve(project.path, "inputs", "cv.pdf");
+    const cvPath = resolve(project.path, "inputs", "upload-id-cv.pdf");
     await writeFile(cvPath, "%PDF-1.4 real bytes");
     const withCv = await store.setProjectCv("cv-project", {
       name: "cv.pdf",
@@ -153,9 +153,17 @@ test("a CV whose file disappeared stops counting as a matching signal", async ()
       type: "application/pdf",
     });
     // Stored as an in-project relative path so the project stays portable.
-    assert.equal(withCv.cv.path, "inputs/cv.pdf");
+    assert.equal(withCv.cv.path, "inputs/upload-id-cv.pdf");
     assert.equal(withCv.cv.valid, true);
     assert.equal(withCv.readiness.modes.finder.missing.length, 1); // only target left
+
+    const projectFile = resolve(project.path, "project.json");
+    const movedMetadata = JSON.parse(await readFile(projectFile, "utf8"));
+    movedMetadata.cv.path = "/old/checkout/projects/cv-project/inputs/upload-id-cv.pdf";
+    await writeFile(projectFile, JSON.stringify(movedMetadata));
+    const recovered = await store.getProject("cv-project");
+    assert.equal(recovered.cv.valid, true);
+    assert.equal(recovered.cv.absolutePath, cvPath);
 
     await unlink(cvPath);
     const broken = await store.getProject("cv-project");

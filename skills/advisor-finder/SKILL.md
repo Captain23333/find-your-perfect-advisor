@@ -38,8 +38,14 @@ cutoff, location, or excluded institutions. Accept a user-selected
 `shortlistTarget` from 5 to 50, defaulting to 10. Preserve hard constraints
 separately.
 
+Also read the project's `portfolioStrategy`: `balanced`, `conservative`, or
+`ambitious`. Treat this as a desired application-portfolio shape, not as an
+admission probability. When it is absent, use `balanced`.
+
 If the complete Advisor Atlas skill set is present, read
 `../advisor-pipeline/references/core-data-contract.md` before structured writes.
+Read `references/matching-strategy.md` before classifying, filtering, or ranking
+candidates.
 Read `references/application-facts.md` only when the shortlist is ready for the
 objective feasibility pass.
 
@@ -111,15 +117,22 @@ supporting evidence:
 - 2–3: occasional involvement.
 - 0–1: no meaningful connection.
 
-Compute the weighted or equal-weight fit score transparently. Keep QS rank, tuition,
-scholarships, deadlines, and community opinions out of this score.
+Compute the weighted or equal-weight research-fit score transparently. Keep QS
+rank, tuition, scholarships, deadlines, and community opinions out of this
+score. Separately assess applicant-relative profile match from CV evidence
+(methods, publications, projects, prerequisites, and transferable skills).
+Never infer low or high admission probability from prestige alone.
 
 ### 4. Shortlist
 
-Select up to `shortlistTarget` research-relevant advisors for objective
-feasibility research.
-Preserve excluded candidates and reasons. Do not deep-profile all discovery
-rows merely to fill an output.
+Classify the official application pathway before scoring. Apply explicit hard
+constraints before shortlist scores, keeping unsupported conditions `unknown`.
+Then select up to `shortlistTarget` research-relevant advisors for objective
+feasibility research and label each advisor-program `reach`, `match`, `safer`,
+or `unknown` relative to the applicant's evidenced profile. Follow the
+deterministic portfolio rule in `references/matching-strategy.md`; preserve
+excluded candidates and reasons. Do not deep-profile all discovery rows merely
+to fill an output.
 
 ### 5. Program mapping and objective facts
 
@@ -165,6 +178,15 @@ stable `advisorProgramId`, not only a name:
   "school": "Real institution",
   "program": "Official program",
   "fit": 0.0,
+  "profileMatch": 0.0,
+  "competitiveness": "reach|match|safer|unknown",
+  "overallMatch": 0.0,
+  "matchReasons": [],
+  "hardConstraintStatus": "pass|fail|unknown",
+  "hardConstraintReasons": [],
+  "applicationPathway": "supervisor_led|committee_led|advertised_position|structured_program|unknown",
+  "opportunityStatus": "verified_open|signal_only|unknown|verified_closed",
+  "recommendedAction": "apply_vacancy|contact_supervisor|apply_program|monitor|exclude|verify_constraints|verify_eligibility|verify_pathway",
   "status": "Open or needs confirmation",
   "statusTone": "open|caution|closed|unknown",
   "feasibility": "eligible|ineligible|needs_confirmation",
@@ -173,6 +195,19 @@ stable `advisorProgramId`, not only a name:
   "evidence": 0
 }
 ```
+
+`fit` remains research-only. The deterministic selector recalculates
+`overallMatch` as `0.60 * fit + 0.40 * profileMatch`; hard constraints,
+feasibility, pathway, and opportunity remain separate gates/evidence, while
+portfolio shape controls selection rather than the score. Unknown values
+remain `null` or `unknown`, never zero. School rank, prestige, title, age,
+nationality, ethnicity, or alumni identity cannot substitute for applicant fit
+or current opportunity evidence.
+
+Keep the component scores visible. After writing the candidate pool, run
+`scripts/apply_matching_strategy.mjs --project-root "$PWD"`. Its selected
+`candidates.json`, excluded-candidate file, and matching audit are required
+Finder outputs and must not be overridden manually.
 
 Generate `advisor_shortlist_YYYYMMDD.xlsx` with
 `scripts/build_advisor_excel.mjs`. The shipped builder automatically uses the

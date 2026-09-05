@@ -30,7 +30,7 @@ the confirmed name is printed, not whether the preflight is required.
 
 ## Confirmation snapshot
 
-`project.json` schemaVersion 6 contains:
+`project.json` schemaVersion 8 contains:
 
 ```json
 {

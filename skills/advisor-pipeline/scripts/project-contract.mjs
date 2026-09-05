@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const PROJECT_SCHEMA_VERSION = 6;
+export const PROJECT_SCHEMA_VERSION = 8;
 export const STATUS_SCHEMA_VERSION = 2;
 
 export const APPLICATION_MATERIAL_IDS = [
@@ -130,6 +130,68 @@ export function normalizeShortlistTarget(value, fallback = 10) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(5, Math.min(50, Math.round(parsed)));
+}
+
+export function normalizePortfolioStrategy(value, fallback = "balanced") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return ["balanced", "conservative", "ambitious"].includes(normalized)
+    ? normalized
+    : fallback;
+}
+
+export const APPLICATION_PATHWAYS = [
+  "supervisor_led",
+  "committee_led",
+  "advertised_position",
+  "structured_program",
+  "unknown",
+];
+
+export const OPPORTUNITY_STATUSES = [
+  "verified_open",
+  "signal_only",
+  "unknown",
+  "verified_closed",
+];
+
+export const HARD_CONSTRAINT_STATUSES = ["pass", "fail", "unknown"];
+
+export function normalizeApplicationPathway(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return APPLICATION_PATHWAYS.includes(normalized) ? normalized : "unknown";
+}
+
+export function normalizeOpportunityStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return OPPORTUNITY_STATUSES.includes(normalized) ? normalized : "unknown";
+}
+
+export function normalizeHardConstraintStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return HARD_CONSTRAINT_STATUSES.includes(normalized) ? normalized : "unknown";
+}
+
+export function recommendedActionForCandidate(candidate = {}) {
+  const hardStatus = normalizeHardConstraintStatus(candidate.hardConstraintStatus);
+  const pathway = normalizeApplicationPathway(candidate.applicationPathway);
+  const opportunity = normalizeOpportunityStatus(candidate.opportunityStatus);
+  const feasibility = String(candidate.feasibility || "needs_confirmation").trim();
+  if (hardStatus === "fail" || feasibility === "ineligible" || opportunity === "verified_closed") {
+    return "exclude";
+  }
+  if (pathway === "unknown") return "verify_pathway";
+  if (hardStatus === "unknown") return "verify_constraints";
+  if (feasibility === "needs_confirmation") return "verify_eligibility";
+  if (pathway === "advertised_position") {
+    return opportunity === "verified_open" || opportunity === "signal_only"
+      ? "apply_vacancy"
+      : "monitor";
+  }
+  if (pathway === "supervisor_led") return "contact_supervisor";
+  if (pathway === "committee_led" || pathway === "structured_program") {
+    return "apply_program";
+  }
+  return "verify_pathway";
 }
 
 export function normalizeInterests(input) {
@@ -601,9 +663,13 @@ export function normalizeProjectMetadata(
     season: text(source.season, 80),
     degree: text(source.degree, 80),
     target: text(source.target, 500),
+    hardConstraints: text(source.hardConstraints ?? source.hard_constraints, 1000),
     interests: normalizeInterests(source.interests),
     shortlistTarget: normalizeShortlistTarget(
       source.shortlistTarget ?? source.shortlist_target,
+    ),
+    portfolioStrategy: normalizePortfolioStrategy(
+      source.portfolioStrategy ?? source.portfolio_strategy,
     ),
     cv:
       source.cv && typeof source.cv === "object" && !Array.isArray(source.cv)
@@ -657,6 +723,8 @@ export function normalizeProjectMetadata(
     }
   }
   delete normalized.shortlist_target;
+  delete normalized.portfolio_strategy;
+  delete normalized.hard_constraints;
   delete normalized.applicant_name;
   return normalized;
 }
@@ -854,6 +922,15 @@ export function validateProjectMetadata(input) {
   }
   if (typeof input.applicantName !== "string") {
     errors.push("applicantName 必须是字符串");
+  }
+  if (typeof input.hardConstraints !== "string") {
+    errors.push("hardConstraints 必须是字符串");
+  }
+  if (!["balanced", "conservative", "ambitious"].includes(input.portfolioStrategy)) {
+    errors.push("portfolioStrategy 必须是 balanced、conservative 或 ambitious");
+  }
+  if (!Number.isInteger(input.shortlistTarget) || input.shortlistTarget < 5 || input.shortlistTarget > 50) {
+    errors.push("shortlistTarget 必须是 5 到 50 的整数");
   }
   if (!Array.isArray(input.interests)) {
     errors.push("interests 必须是数组");

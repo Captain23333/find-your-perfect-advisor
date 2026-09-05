@@ -14,6 +14,12 @@ export function buildPhaseOneTaskPrompt({ project, filePath = "" }) {
         .map((interest) => `${interest.name} ${interest.weight}%`)
         .join("，")
     : "未提供；请以 CV 为主要匹配信号";
+  const strategy = {
+    balanced: "均衡：保留少量冲刺，并以主申和相对稳妥选择为主体",
+    conservative: "稳妥优先：压低冲刺比例，优先当前履历更有现实机会的项目",
+    ambitious: "冲刺优先：允许更多高门槛项目，但仍保留可申请的主申选择",
+  }[project?.portfolioStrategy || "balanced"];
+  const hardConstraints = String(project?.hardConstraints || "").trim() || "未提供；不得自行添加隐含门槛";
 
   return `${defaultTask}
 
@@ -21,10 +27,12 @@ export function buildPhaseOneTaskPrompt({ project, filePath = "" }) {
 - CV：${project?.cv?.path || filePath || "未上传"}
 - 申请目标：${project?.target || "未填写"}
 - 目标学位与申请季：${project?.degree || "未填写"} · ${project?.season || "未填写"}
+- 必须满足的硬条件：${hardConstraints}
 - 研究兴趣权重：${interests}
 - shortlist：Top ${project?.shortlistTarget || 10}
+- 申请组合策略：${strategy}
 
-仅调查目标范围内的导师。Phase 1 不检索社区风评或其他 Phase 2 信息；优先复用同一官方页面中的项目与申请条件，避免重复搜索。`;
+仅调查目标范围内的导师。先识别申请路径，再核验硬条件，然后分别判断研究相似度、履历匹配和机会证据；除非用户明确要求全冲刺，不要让 reach 候选占据 shortlist 多数。Phase 1 不检索社区风评或其他 Phase 2 信息；优先复用同一官方页面中的项目与申请条件，避免重复搜索。`;
 }
 
 export function buildInvestigationTaskPrompt() {

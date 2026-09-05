@@ -4,7 +4,6 @@ import fs from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   dateCell,
-  formulaCell,
   writeWorkbook,
 } from "../../advisor-pipeline/scripts/workbook-runtime.mjs";
 
@@ -38,6 +37,32 @@ function multiline(value) {
   if (Array.isArray(value)) return value.filter(Boolean).join("\n");
   if (value === null || value === undefined) return "";
   return String(value);
+}
+
+function optionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function applicationPriority(row) {
+  if (
+    row.hardConstraintStatus === "fail" ||
+    row.feasibility === "ineligible" ||
+    row.opportunityStatus === "verified_closed"
+  ) return "排除";
+  if (
+    row.hardConstraintStatus !== "pass" ||
+    row.feasibility !== "eligible" ||
+    !row.applicationPathway ||
+    row.applicationPathway === "unknown" ||
+    (["supervisor_led", "advertised_position"].includes(row.applicationPathway) &&
+      row.opportunityStatus === "unknown")
+  ) return "待确认";
+  if (row.competitiveness === "reach") return "冲刺";
+  if (row.competitiveness === "match") return "主申";
+  if (row.competitiveness === "safer") return "相对稳妥";
+  return "待确认";
 }
 
 function tableSheet(name, headers, rows, widths, options = {}) {
@@ -74,16 +99,22 @@ async function build(input, outputPath, previewDir = "") {
     "导师官网链接",
     "导师招生与联系要求",
     "研究匹配分",
+    "履历匹配分",
+    "综合匹配分",
+    "申请定位",
+    "硬条件状态",
+    "硬条件依据",
+    "申请路径",
+    "机会状态",
+    "建议下一步",
     "客观申请可行性",
     "背调结论",
     "风险与信息缺口",
     "最后核实日期",
     "关键官方来源",
   ];
-  const primaryRows = applicationRows.map((row, index) => [
-    formulaCell(
-      `=IF(T${index + 2}="ineligible","排除",IF(T${index + 2}="needs_confirmation","待确认",IF(S${index + 2}>=8.5,"A",IF(S${index + 2}>=7,"B","C"))))`,
-    ),
+  const primaryRows = applicationRows.map((row) => [
+    applicationPriority(row),
     row.schoolName || "",
     Number.isFinite(Number(row.qsRank)) ? Number(row.qsRank) : null,
     row.qsEdition || "",
@@ -101,7 +132,15 @@ async function build(input, outputPath, previewDir = "") {
     row.advisorEmail || "",
     row.advisorHomepage || "",
     multiline(row.advisorContactRequirements),
-    Number.isFinite(Number(row.researchFit)) ? Number(row.researchFit) : null,
+    optionalNumber(row.researchFit),
+    optionalNumber(row.profileMatch),
+    optionalNumber(row.overallMatch),
+    row.competitiveness || "unknown",
+    row.hardConstraintStatus || "unknown",
+    multiline(row.hardConstraintReasons),
+    row.applicationPathway || "unknown",
+    row.opportunityStatus || "unknown",
+    row.recommendedAction || "verify_pathway",
     row.feasibility || "needs_confirmation",
     multiline(row.backcheckSummary),
     multiline(row.risksAndGaps),
@@ -112,35 +151,44 @@ async function build(input, outputPath, previewDir = "") {
     "1_申请就绪总表",
     primaryHeaders,
     primaryRows,
-    [12, 20, 11, 12, 22, 24, 18, 34, 18, 18, 34, 44, 24, 18, 46, 25, 34, 44, 12, 16, 44, 40, 20, 44],
+    [14, 20, 11, 12, 22, 24, 18, 34, 18, 18, 34, 44, 24, 18, 46, 25, 34, 44, 12, 12, 12, 14, 14, 42, 18, 16, 18, 16, 44, 40, 20, 44],
     {
       numberFormats: [
         { column: 2, format: "0" },
         { column: 18, format: "0.0" },
+        { column: 19, format: "0.0" },
+        { column: 20, format: "0.0" },
       ],
       conditionalFormats: primaryRows.length
         ? [
-            { column: 19, formula: '"eligible"', fill: COLORS.green, dxfId: 0 },
-            { column: 19, formula: '"needs_confirmation"', fill: COLORS.amber, dxfId: 1 },
-            { column: 19, formula: '"ineligible"', fill: COLORS.red, dxfId: 2 },
+            { column: 27, formula: '"eligible"', fill: COLORS.green, dxfId: 0 },
+            { column: 27, formula: '"needs_confirmation"', fill: COLORS.amber, dxfId: 1 },
+            { column: 27, formula: '"ineligible"', fill: COLORS.red, dxfId: 2 },
           ]
         : [],
     },
   ),
   tableSheet(
     "2_研究匹配与选择",
-    ["advisorProgramId", "导师", "学校", "项目", "研究匹配分", "选择状态", "匹配证据"],
+    ["advisorProgramId", "导师", "学校", "项目", "研究匹配分", "履历匹配分", "综合匹配分", "申请定位", "硬条件", "申请路径", "机会状态", "下一步", "选择状态", "匹配证据"],
     safeRows(input.fitRows).map((row) => [
       row.advisorProgramId || "",
       row.advisorName || "",
       row.school || "",
       row.program || "",
-      Number.isFinite(Number(row.researchFit)) ? Number(row.researchFit) : null,
+      optionalNumber(row.researchFit),
+      optionalNumber(row.profileMatch),
+      optionalNumber(row.overallMatch),
+      row.competitiveness || "unknown",
+      row.hardConstraintStatus || "unknown",
+      row.applicationPathway || "unknown",
+      row.opportunityStatus || "unknown",
+      row.recommendedAction || "verify_pathway",
       row.selected ? "已选择" : "未选择",
       multiline(row.fitEvidence),
     ]),
-    [30, 18, 20, 24, 12, 12, 48],
-    { numberFormats: [{ column: 4, format: "0.0" }] },
+    [30, 18, 20, 24, 12, 12, 12, 14, 14, 18, 16, 18, 12, 48],
+    { numberFormats: [4, 5, 6].map((column) => ({ column, format: "0.0" })) },
   ),
   tableSheet(
     "3_背调证据",
@@ -175,6 +223,8 @@ async function build(input, outputPath, previewDir = "") {
     ["生成日期", dateCell(input.generatedAt || new Date())],
     ["目标学位与申请季", multiline([input.config?.degree, input.config?.intake])],
     ["目标范围", input.config?.target || ""],
+    ["必须满足的硬条件", input.config?.hardConstraints || ""],
+    ["申请组合策略", input.config?.portfolioStrategy || "balanced"],
     ["研究兴趣与权重", multiline(input.config?.interests)],
     ["已选背调维度", multiline(input.config?.selectedSections)],
     ["社区资料授权", input.config?.communityConsented ? "已授权本地使用" : "未授权"],

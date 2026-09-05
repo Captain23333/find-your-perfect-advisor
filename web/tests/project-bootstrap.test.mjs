@@ -27,6 +27,8 @@ test("shared contract migrates string interests without inventing a target", () 
   assert.equal(migrated.slug, "cli-project");
   assert.equal(migrated.target, "");
   assert.equal(migrated.shortlistTarget, 12);
+  assert.equal(migrated.hardConstraints, "");
+  assert.equal(migrated.portfolioStrategy, "balanced");
   assert.deepEqual(
     migrated.interests.map(({ name }) => name),
     ["Human-AI interaction", "AI for medicine"],
@@ -71,7 +73,7 @@ test("direct CLI bootstrap preserves Finder outputs and creates Web-compatible s
 
     const project = JSON.parse(await readFile(resolve(root, "project.json"), "utf8"));
     const status = JSON.parse(await readFile(resolve(root, "status.json"), "utf8"));
-    assert.equal(project.schemaVersion, 6);
+    assert.equal(project.schemaVersion, 8);
     assert.equal(project.target, "");
     assert.deepEqual(project.interests, []);
     assert.ok(project.createdAt);

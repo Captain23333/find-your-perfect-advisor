@@ -1,6 +1,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { verifyApplicationMaterialArtifacts } from "../../skills/advisor-pipeline/scripts/application-materials-artifacts.mjs";
+import { recommendedActionForCandidate } from "../../skills/advisor-pipeline/scripts/project-contract.mjs";
 
 export const RUN_MODES = [
   "finder",
@@ -97,7 +98,7 @@ function combineArtifactChecks(primary, workbook) {
   };
 }
 
-function verifyFinder(file) {
+function verifyFinder(file, auditFile) {
   const missing = [];
   if (!file.exists) {
     missing.push("outputs/candidates.json 尚未生成");
@@ -119,6 +120,101 @@ function verifyFinder(file) {
   }
   if (new Set(ids.filter(Boolean)).size !== ids.filter(Boolean).length) {
     missing.push("candidates.json 中的 advisorProgramId 有重复");
+  }
+  if (file.value.some((candidate) => candidate?.matchingContractVersion !== 2)) {
+    missing.push("部分候选未经过 matching contract v2 确定性筛选");
+  }
+  const requiredFields = [
+    "fit",
+    "profileMatch",
+    "overallMatch",
+    "competitiveness",
+    "hardConstraintStatus",
+    "applicationPathway",
+    "opportunityStatus",
+    "recommendedAction",
+    "feasibility",
+  ];
+  if (
+    file.value.some((candidate) =>
+      requiredFields.some((field) => !Object.hasOwn(candidate || {}, field)),
+    )
+  ) {
+    missing.push("部分候选没有完整的 matching contract v2 字段");
+  }
+  const allowed = {
+    competitiveness: new Set(["reach", "match", "safer", "unknown"]),
+    hardConstraintStatus: new Set(["pass", "fail", "unknown"]),
+    applicationPathway: new Set([
+      "supervisor_led",
+      "committee_led",
+      "advertised_position",
+      "structured_program",
+      "unknown",
+    ]),
+    opportunityStatus: new Set([
+      "verified_open",
+      "signal_only",
+      "unknown",
+      "verified_closed",
+    ]),
+    feasibility: new Set(["eligible", "ineligible", "needs_confirmation"]),
+  };
+  const scoreIsValid = (value) =>
+    value === null ||
+    (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 10);
+  if (
+    file.value.some(
+      (candidate) =>
+        ![candidate?.fit, candidate?.profileMatch, candidate?.overallMatch].every(scoreIsValid) ||
+        Object.entries(allowed).some(([field, values]) => !values.has(candidate?.[field])),
+    )
+  ) {
+    missing.push("部分候选含有超范围分数或非法匹配分类");
+  }
+  const inconsistent = file.value.some((candidate) => {
+    const fit = candidate?.fit;
+    const profile = candidate?.profileMatch;
+    const hasScore = (value) =>
+      value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+    const hasComponents = hasScore(fit) && hasScore(profile);
+    const expectedOverall = hasComponents
+      ? Math.round((Number(fit) * 0.6 + Number(profile) * 0.4) * 10) / 10
+      : null;
+    const overallMatches = expectedOverall === null
+      ? candidate?.overallMatch === null
+      : Number(candidate?.overallMatch) === expectedOverall;
+    return (
+      !overallMatches ||
+      candidate?.recommendedAction !== recommendedActionForCandidate(candidate)
+    );
+  });
+  if (inconsistent) {
+    missing.push("部分候选的综合分或下一步与确定性匹配规则不一致");
+  }
+  if (file.value.some((candidate) => candidate?.recommendedAction === "exclude")) {
+    missing.push("candidates.json 仍包含应由确定性筛选排除的候选");
+  }
+  if (!auditFile.exists) {
+    missing.push("outputs/matching-audit.json 尚未生成");
+  } else if (
+    auditFile.invalid ||
+    !auditFile.value ||
+    auditFile.value.matchingContractVersion !== 2
+  ) {
+    missing.push("outputs/matching-audit.json 不是合法的 matching contract v2 审计");
+  } else if (Number(auditFile.value.selectedCount) !== file.value.length) {
+    missing.push("matching-audit.json 的 selectedCount 与 candidates.json 不一致");
+  } else if (
+    Number(auditFile.value.reachCount) !==
+    file.value.filter((candidate) => candidate?.competitiveness === "reach").length
+  ) {
+    missing.push("matching-audit.json 的 reachCount 与 candidates.json 不一致");
+  } else if (
+    Number(auditFile.value.reachCount) > Number(auditFile.value.reachCap) &&
+    auditFile.value.portfolioDeviation !== "insufficient_non_reach_candidates"
+  ) {
+    missing.push("matching-audit.json 没有解释冲刺比例为何超过上限");
   }
   return { missing, counts: { candidateCount: file.value.length } };
 }
@@ -237,6 +333,26 @@ function verifyRanking(file) {
   if (!sortable.length) {
     missing.push("排名结果既没有 rank 也没有可比较的分数");
   }
+  const ids = rankings.map((item) => String(item?.advisorProgramId || "").trim());
+  if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
+    missing.push("排名结果缺少唯一稳定的 advisorProgramId");
+  }
+  const matchingFields = [
+    "profileMatch",
+    "overallMatch",
+    "competitiveness",
+    "hardConstraintStatus",
+    "applicationPathway",
+    "opportunityStatus",
+    "recommendedAction",
+  ];
+  if (
+    rankings.some((item) =>
+      matchingFields.some((field) => !Object.hasOwn(item || {}, field)),
+    )
+  ) {
+    missing.push("排名结果没有完整保留 Finder 的匹配、硬条件、申请路径与行动字段");
+  }
   return { missing, counts: { rankingCount: rankings.length } };
 }
 
@@ -287,7 +403,8 @@ export async function verifyRunArtifacts({
     return { complete: outcome.missing.length === 0, ...outcome };
   }
   const file = await readJsonFile(projectPath, "outputs", "candidates.json");
-  const primary = verifyFinder(file);
+  const auditFile = await readJsonFile(projectPath, "outputs", "matching-audit.json");
+  const primary = verifyFinder(file, auditFile);
   const workbook = await verifyWorkbook(projectPath, "advisor_shortlist", startedAt);
   const outcome = combineArtifactChecks(primary, workbook);
   return { complete: outcome.missing.length === 0, ...outcome };

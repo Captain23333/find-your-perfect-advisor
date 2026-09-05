@@ -11,6 +11,8 @@ Detective authorization and application-material schemas.
 | `project.json` | User inputs and workflow configuration |
 | `status.json` | Current phase, stage, and real progress counters |
 | `outputs/candidates.json` | Compact Finder rows for the Web candidate table |
+| `outputs/candidates-excluded.json` | Hard-excluded and portfolio-deferred Finder rows |
+| `outputs/matching-audit.json` | Deterministic shortlist and reach-cap audit |
 | `outputs/advisor_records.json` | Advisor facts, fit, selected-section results, and source IDs |
 | `outputs/program_records.json` | Deduplicated school/program/application facts |
 | `outputs/evidence.json` | Field-level evidence and community leads |
@@ -35,7 +37,10 @@ before normalization. Do not hand-compose another contract.
 
 Core project fields are `schemaVersion`, stable `id`/`slug`, `name`,
 `applicantName`, `season`, `degree`, `target`, normalized weighted `interests`,
-`shortlistTarget`, `cv`, timestamps, and the workflow configuration objects.
+`shortlistTarget`, `portfolioStrategy`, `hardConstraints`, `cv`, timestamps, and the workflow
+configuration objects. `portfolioStrategy` is `balanced`, `conservative`, or
+`ambitious`; it shapes the reach/match/safer mix but is never an admission
+probability.
 Leave unknown target, degree, season, applicant name, and interests blank.
 
 The applicant name must be the confirmed real or preferred professional name,
@@ -113,6 +118,8 @@ Store school/program facts once:
   "degree": "",
   "intake": "",
   "program_url": "",
+  "application_pathway": "supervisor_led|committee_led|advertised_position|structured_program|unknown",
+  "opportunity_status": "verified_open|signal_only|unknown|verified_closed",
   "deadline": {"value": "", "status": "not_checked"},
   "tuition": {"value": null, "currency": "", "period": "", "status": "not_checked"},
   "scholarships": {"value": "", "status": "not_checked"},
@@ -125,6 +132,8 @@ Store school/program facts once:
 ```
 
 Keep variable requirements as multiline text; do not invent Boolean columns.
+Application pathway and opportunity status require current official evidence;
+they remain `unknown` when the route or opening cannot be established.
 
 ## Advisor records
 

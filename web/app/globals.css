@@ -248,6 +248,22 @@ button {
   white-space: nowrap;
 }
 
+.project-label {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.project-label small {
+  overflow: hidden;
+  color: #777281;
+  font-size: 8px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .side-nav .project-menu-button {
   width: 27px;
   min-height: 27px;
@@ -2028,6 +2044,29 @@ input[type="checkbox"] {
   color: #827d8c;
 }
 
+.ranking-decision-factors {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.ranking-decision-factors > span:not(.constraint-badge, .competitiveness-badge),
+.ranking-decision-factors > strong {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #635e6c;
+  background: #f3f1f4;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.ranking-decision-factors > strong {
+  color: var(--violet-dark);
+  background: var(--violet-soft);
+}
+
 .ranking-gaps {
   margin-top: 15px;
 }
@@ -2060,7 +2099,7 @@ input[type="checkbox"] {
   position: fixed;
   right: 26px;
   bottom: 26px;
-  z-index: 30;
+  z-index: 80;
   padding: 13px 17px;
   border: 1px solid #5148a4;
   border-radius: 10px;
@@ -2096,10 +2135,17 @@ input[type="checkbox"] {
   z-index: 1;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
   background: #f8f7f5;
   box-shadow: -22px 0 60px rgba(24, 21, 35, 0.18);
   animation: drawer-in 220ms ease;
+}
+
+.runner-scroll-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .runner-header {
@@ -2157,6 +2203,30 @@ input[type="checkbox"] {
   background: transparent;
   font-size: 9px;
   cursor: pointer;
+}
+
+.runtime-refresh-button {
+  min-width: 92px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border-radius: 999px;
+  transition: 160ms ease;
+}
+
+.runtime-refresh-button:not(:disabled):hover {
+  color: var(--violet-dark);
+  background: var(--violet-soft);
+}
+
+.runtime-refresh-button.refreshing span {
+  animation: runtime-spin 700ms linear infinite;
+}
+
+.runtime-refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .runner-providers {
@@ -2814,8 +2884,8 @@ input[type="checkbox"] {
 }
 
 .runner-footer {
-  position: sticky;
-  bottom: 0;
+  position: relative;
+  flex: none;
   min-height: 74px;
   padding: 14px 29px;
   border-top: 1px solid #dfdde2;
@@ -2825,6 +2895,82 @@ input[type="checkbox"] {
   gap: 16px;
   background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(12px);
+}
+
+.competitiveness-badge {
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #77717d;
+  background: #f0eef2;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.competitiveness-badge.reach {
+  color: #a55d25;
+  background: #fff0db;
+}
+
+.competitiveness-badge.match {
+  color: #366f5d;
+  background: #e7f3ed;
+}
+
+.competitiveness-badge.safer {
+  color: #4f5798;
+  background: #eceeff;
+}
+
+.constraint-badge {
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #8a742d;
+  background: #fff7d7;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.constraint-badge.pass {
+  color: #366f5d;
+  background: #e7f3ed;
+}
+
+.constraint-badge.fail {
+  color: #a74747;
+  background: #fbe8e8;
+}
+
+.pathway-action {
+  display: grid;
+  gap: 3px;
+  min-width: 88px;
+}
+
+.pathway-action strong {
+  color: #4e4854;
+  font-size: 9px;
+}
+
+.pathway-action small {
+  color: var(--violet-dark);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.overall-score > strong {
+  color: var(--violet-dark);
+}
+
+.rematch-button {
+  white-space: nowrap;
+}
+
+@keyframes runtime-spin {
+  to { transform: rotate(360deg); }
 }
 
 .runner-footer > span {
